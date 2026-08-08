@@ -165,7 +165,7 @@
                     L0.1 방식이 애초에 작동 불가였음. WebSocket Live 세션을
                     버리고, 마이크 오디오를 침묵 감지로 문장 경계 근처에서
                     끊어(무음 0.8초 또는 최대 8초) WAV로 인코딩한 뒤
-                    gemini-2.5-flash에 하나씩 요청하는 배치 방식으로 전환.
+                    gemini-3.6-flash에 하나씩 요청하는 배치 방식으로 전환.
                     한 번의 응답으로 원문·번역을 함께 받아 문단 그룹핑에
                     바로 투입. 실시간 스트리밍이 아니라 청크당 5~8초
                     지연이 있음. 추정 시간당 비용 약 $0.15(약 1/15).
@@ -447,10 +447,14 @@
         <option value="fr">프랑스어</option>
       </select>
     </div>
+    <div class="sg" id="sgSttHint">
+      <label>받아쓰기 키워드 힌트 (선택 — 고유명사 인식↑)</label>
+      <input type="text" id="sttHint" placeholder="예: 뉴욕시, 맘다니, 공공 식료품점, 코스피" style="width:100%; background:#1c1c1e; color:#eee; border:0.5px solid #333; border-radius:8px; padding:6px 8px; font-size:13px;" />
+    </div>
     <a class="manual-link" href="live_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/translate.html" title="음성 출력·대화 모드가 있는 기본 버전으로 이동">🔵 기본 버전</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/" title="버전을 비교하고 선택하는 첫 화면으로 이동">🏠 홈</a>
-    <div class="version-tag">Light v1.3 · 2026.08.08<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
+    <div class="version-tag">Light v1.4 · 2026.08.08<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
   </div>
 
   <!-- 공용 안내 배너 (저장 공간·긴 세션 경고) -->
@@ -761,7 +765,7 @@ async function refineSegment(seg){
     + '[원문]\n' + t.srcTxt.slice(0,4000) + '\n\n'
     + '[실시간 번역]\n' + t.dstTxt.slice(0,4000);
 
-  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+apiKey,{
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key='+apiKey,{
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       contents:[{parts:[{text:prompt}]}],
@@ -1145,6 +1149,7 @@ function saveSettings(){
   if(dl) localStorage.setItem('gtl_dstLang', dl);
   const pf=document.getElementById('myProfile'); if(pf) localStorage.setItem('gtl_myProfile', pf.value||'');
   const mi=document.getElementById('meetingInfo'); if(mi) localStorage.setItem('gtl_meetingInfo', mi.value||'');
+  const sh=document.getElementById('sttHint'); if(sh) localStorage.setItem('gtl_sttHint', sh.value||'');
 }
 
 function loadSettings(){
@@ -1158,6 +1163,7 @@ function loadSettings(){
   setSel('dstLang', localStorage.getItem('gtl_dstLang'));
   const pf=document.getElementById('myProfile'); if(pf) pf.value = localStorage.getItem('gtl_myProfile')||'';
   const mi=document.getElementById('meetingInfo'); if(mi) mi.value = localStorage.getItem('gtl_meetingInfo')||'';
+  const sh=document.getElementById('sttHint'); if(sh) sh.value = localStorage.getItem('gtl_sttHint')||'';
   const fs = parseInt(localStorage.getItem('gtl_fontsize')||'15',10);
   if(fs>=11 && fs<=26) applyFont(fs);
   const rv = localStorage.getItem('gtl_refine');
@@ -1246,7 +1252,7 @@ async function suggestReply(){
     + 'JSON 스키마에 맞춰서만 답하세요.';
 
   try{
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+key, {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key='+key, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         contents: [{ role:'user', parts:[{ text: prompt }] }],
@@ -1276,6 +1282,7 @@ async function suggestReply(){
 
 document.getElementById('myProfile')?.addEventListener('change', saveSettings);
 document.getElementById('meetingInfo')?.addEventListener('change', saveSettings);
+document.getElementById('sttHint')?.addEventListener('change', saveSettings);
 
 // 입력 시 자동 저장
 document.getElementById('apiKey').addEventListener('change', ()=>{
@@ -1321,13 +1328,13 @@ async function copyCol(boxId,btnId){
 
 // ══════════════════════════════════════════════
 // 배치 처리 아키텍처 — WebSocket Live 세션 대신 오디오를 문장 경계 근처에서
-// 잘라 짧은 조각으로 만들고, 일반 텍스트 모델(gemini-2.5-flash)에 하나씩
+// 잘라 짧은 조각으로 만들고, 일반 텍스트 모델(gemini-3.6-flash)에 하나씩
 // 요청해 [원문, 번역]을 한 번에 받는다. Live API의 "네이티브 오디오" 계열
 // 모델은 TEXT 전용 응답을 지원하지 않아(1007 오류) 오디오 출력이 강제로
 // 청구되는데, 이 방식은 애초에 오디오 출력 자체가 없어 요금이 크게 준다
 // (추정 시간당 약 $2.2 → 약 $0.15, 약 1/15 수준). 대신 실시간 스트리밍이
 // 아니라 몇 초 단위로 도착하는 방식이라 체감 지연이 늘어난다.
-const BATCH_MODEL = 'gemini-2.5-flash';
+const BATCH_MODEL = 'gemini-3.6-flash';
 const SILENCE_RMS = 0.010;          // 이 RMS 미만이면 "조용함"으로 판단(기기·환경에 따라 조정 필요)
 const SILENCE_MS = 800;             // 이만큼 조용하면 지금까지 모은 것을 하나의 청크로 확정
 const MAX_CHUNK_MS = 8000;          // 침묵이 없어도 이 길이가 되면 강제로 끊는다(지연 상한)
@@ -1344,11 +1351,13 @@ let chunkProcessing = false;
 let lastContextText = ''; // 직전 조각의 원문 끝부분 — 다음 요청에 맥락으로 함께 보낸다
 let chunkSeq = 0;         // 진단용 — 지금까지 보낸/받은 조각 수
 
-function buildTranslatePrompt(targetLangName){
+function buildTranslatePrompt(targetLangName, hint){
   return '당신은 실시간 회의 통역사입니다. 첨부된 오디오 조각을 듣고 다음을 JSON으로 답하세요.\n'
     + '- source_text: 들린 내용을 그대로 받아적은 원문(원래 발화된 언어 그대로, 여러 언어가 섞여도 그대로)\n'
     + '- translation: 그 내용을 자연스러운 '+targetLangName+'로 번역한 것\n'
     + '- language: 감지된 원문 언어의 BCP-47 코드(예: en, zh, ja, ko)\n\n'
+    + '정확도 규칙: 숫자·날짜·금액·퍼센트·고유명사(인명·지명·회사명)를 특히 정확히 받아적으세요. 들린 소리에 최대한 가깝게 적되, 문맥으로 그럴듯하게 지어내지 마세요.\n'
+    + (hint ? ('이 회의의 주제·자주 나오는 고유명사/용어: '+hint+'. 발음이 이와 비슷하면 이 표기를 우선하세요.\n') : '')
     + '이 오디오는 더 긴 회의를 몇 초 단위로 잘라낸 조각 중 하나이므로 문장이 중간에서 '
     + '시작되거나 끝날 수 있습니다. 있는 그대로, 잘린 문장이면 잘린 대로 처리하세요. '
     + '오디오에 의미 있는 발화가 전혀 없다면(침묵·잡음뿐) source_text와 translation을 '
@@ -1393,8 +1402,8 @@ function updateChunkStatus(){
   }
 }
 
-async function sendChunkToGemini(key, base64Wav, contextText, targetLangName){
-  const systemInstruction = buildTranslatePrompt(targetLangName);
+async function sendChunkToGemini(key, base64Wav, contextText, targetLangName, hint){
+  const systemInstruction = buildTranslatePrompt(targetLangName, hint);
   const contextPart = contextText ? ('[직전 맥락] '+contextText) : '';
   const body = {
     systemInstruction: { parts: [{ text: systemInstruction }] },
@@ -1460,7 +1469,8 @@ async function processQueue(){
   try{
     const wav = encodeWAV(chunk, SR);
     const targetLangName = langName[currentTargetLang] || '한국어';
-    const result = await sendChunkToGemini(currentKey, wav, lastContextText, targetLangName);
+    const sttHint = document.getElementById('sttHint')?.value.trim() || '';
+    const result = await sendChunkToGemini(currentKey, wav, lastContextText, targetLangName, sttHint);
     handleChunkResult(result);
     chunkSeq++;
   }catch(err){
@@ -2108,7 +2118,7 @@ async function summarizeSession(session, areaId, btnId, langSelId){
 ${fullText.slice(0,8000)}`;
 
   try{
-    const gRes=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,{
+    const gRes=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
