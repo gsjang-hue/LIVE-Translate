@@ -1,4 +1,5 @@
-﻿<!DOCTYPE html>
+
+<!DOCTYPE html>
 <!--
   LIVE translate
   v6.7  2026.08.07  내 프로필 예시 문구 회사명 제거. 프로필 기본값을 실제
@@ -213,7 +214,7 @@
   .conv-banner { padding: 6px 1rem; font-size: 12px; color: #bf5fff; background: #1a0d2a; border-bottom: 0.5px solid #bf5fff33; flex-shrink: 0; text-align: center; letter-spacing: 0.03em; }
 
   /* ── 접히는 설정 패널 ── */
-  .settings { padding: 0.5rem 0.8rem; border-bottom: 0.5px solid #2a2a2a; display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; flex-shrink: 0; background: #131313; overflow: hidden; transition: max-height 0.2s ease, padding 0.2s ease; max-height: 200px; }
+  .settings { padding: 0.5rem 0.8rem; border-bottom: 0.5px solid #2a2a2a; display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; flex-shrink: 0; background: #131313; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; transition: max-height 0.2s ease, padding 0.2s ease; max-height: 70vh; }
   .settings.collapsed { max-height: 0; padding-top: 0; padding-bottom: 0; border-bottom: none; }
   .sg { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
   .sg label { font-size: 10px; color: #555; }
@@ -351,6 +352,10 @@
 
   @media (max-width: 599px) {
     .settings { flex-direction: column; }
+    .ctrl-scroll { flex-wrap: wrap; overflow-x: visible; }
+    .ctrl-session { display: none; }
+    .settings .sg { width: 100%; }
+    .settings select { max-width: 100%; width: 100%; }
     input[type="password"] { width: 100%; }
     .session-input { width: 100%; }
     .btns { margin-left: 0; width: 100%; }
@@ -459,7 +464,7 @@
         <option value="fr">프랑스어</option>
       </select>
     </div>
-    <a class="manual-link" href="gemini_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
+    <a class="manual-link" href="live_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/translate_light.html" title="비용을 아낀 실험적 텍스트 전용 버전(개발 중)">🟢 Light 버전</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/" title="버전을 비교하고 선택하는 첫 화면으로 이동">🏠 홈</a>
     <div class="version-tag">v6.7 · 2026.08.07<br><span id="costLabel" style="font-size:9px;color:#0a84ff;"></span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
