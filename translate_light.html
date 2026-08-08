@@ -1,0 +1,2179 @@
+﻿<!DOCTYPE html>
+<!--
+  LIVE translate
+  v5.3  2026.08.01  회의록 목록에 다중 선택 삭제 기능 추가("선택" 버튼 →
+                    체크박스로 여러 개 골라 한번에 삭제)
+  v5.2  2026.08.01  회의 모드 문단 분리 재발 수정: 길이(여유분 80자) 기반 분리가
+                    침묵 분리와 달리 문장 중간 여부를 확인하지 않고 즉시 잘라
+                    "make | the Fed's..." 처럼 진행 중인 문장이 쪼개지는 경우가
+                    있었다. 길이 기반 분리도 문장 중간이면 완결까지 미루도록
+                    침묵 분리와 같은 pendingSilenceBreak 메커니즘을 공유하게 함
+  v5.1  2026.08.01  실증 확인(API 키 1개만으로 정상 작동 확인됨) — 대화 모드 완성
+                    단계 진입. 디버깅용 UI 정리: 두 번째 API Key 입력창,
+                    "ws2 끄고 단독 테스트" 진단 체크박스 제거. 상태 표시줄을
+                    연결 상태(✓/✕)와 오류 표시만 남기고 간소화
+  v5.0  2026.08.01  실증 확인(목소리 일관성 해결, 단어 누락 대폭 감소). 남은 문제인
+                    "영→한 텍스트에 영어·한국어가 섞여 나오는" 현상 수정:
+                    오디오에만 적용했던 입력언어 일치 필터(v4.7)를 텍스트
+                    출력에도 동일하게 적용
+  v4.9  2026.08.01  실증 확인(7분 안정, 오디오 끊김 완전 해소). "같은 화자인데
+                    문장마다 성우가 바뀐다" 문제 수정: speechConfig로 음성을
+                    방향별로 고정(ws=Puck, ws2=Kore) — 지금까지 미지정 상태라
+                    모델이 매 턴 임의로 목소리를 고르고 있었음
+  v4.8  2026.08.01  오디오 끊김(버퍼링 현상)은 해결 확인됨. 남은 문제인
+                    "가끔 3~4단어가 통째로 안 들리는" 현상 대응: 마이크
+                    콜백(128ms마다 실행)에서 ws·ws2용 JSON을 중복 직렬화
+                    하던 것을 1회로 통합해 메인 스레드 부담 축소
+  v4.7  2026.08.01  한국어 발화 중 간헐적으로 한국어 오디오가 섞여 나오던 문제
+                    수정: echoTargetLanguage:false여도 입력이 그 방향 자신의
+                    타겟 언어와 같을 때 모델이 가끔 음성을 내는 것으로 보여,
+                    감지된 입력 언어가 방향의 타겟과 같으면 오디오 재생만
+                    걸러내도록 함(텍스트는 그대로 유지)
+  v4.6  2026.08.01  영→한/한→영 오디오 출력이 정상 확인됨(2분 26초 안정,
+                    양방향 모두 음성 재생). 남은 문제인 "몇 단어 재생 후 한
+                    단어 스킵" 현상 수정: 부분 청크를 성급하게 내보내던 60ms
+                    지연 타이머를 180ms로 늘리고, 대화 모드 재생 여유(lookahead)를
+                    0.30→0.38초로 확대해 이음새 간격을 줄임
+  v4.5  2026.08.01  실증 확인(2분+ 대화 성공): 영어→한국어 방향 텍스트는 나오는데
+                    음성만 안 나오는 문제 수정. 한쪽이 계속 말하면 반대 방향
+                    오디오가 무조건 버려지던 스피커 소유권 기아 현상을, 1.2초
+                    이상 잡고 있으면 상대에게 양보하도록 고쳐 해결
+  v4.4  2026.08.01  실증 확인: 마이크 차단을 끈 단독 세션이 2분 40초간 끊김 없이
+                    안정적으로 작동함(지금까지 최초의 정상 사례). 마이크 차단이
+                    피드백 방지가 아니라 모델의 턴 처리 자체를 방해하고 있었던
+                    것으로 결론. 이제 ws2 존재 여부와 무관하게 마이크는 항상
+                    끊김 없이 스트리밍하고, 스피커 출력(재생)만 조율한다
+  v4.3  2026.08.01  결정적 발견: 진단용 "ws2 끄고 단독 테스트"에서도 증상이 동일해
+                    두 세션 동시 개설 가설을 완전히 기각. 원인은 대화 모드 전용
+                    마이크 차단·audioStreamEnd 로직이 convMode 값만으로 켜져 있어,
+                    경쟁 상대(ws2)가 없는 단독 세션에서도 불필요하게 개입해 회의
+                    모드와 달리 턴 처리를 방해했을 가능성. ws2가 실제로 열려있을
+                    때만 이 로직이 작동하도록 수정(needsHalfDuplex)
+  v4.2  2026.08.01  음성 출력이 "테이프 늘어지듯" 왜곡되는 문제 수정: 24kHz 서버
+                    오디오를 컨텍스트의 실제 샘플레이트(기기 고유값)와 다르게
+                    선언한 채 브라우저의 자동 리샘플링에 맡기고 있었다. iOS에서
+                    이 교차 샘플레이트 재생이 부정확한 사례가 있어, 데이터를
+                    직접 리샘플링해 버퍼-컨텍스트 샘플레이트를 일치시킴
+  v4.1  2026.08.01  audioStreamEnd 적용 후에도 턴종료가 계속 0으로 나와 해당
+                    가설도 기각. 두 세션을 동시에 여는 구조 자체가 원인인지
+                    격리하기 위해 "ws2 끄고 단독 세션만 테스트" 진단 스위치 추가
+  v4.0  2026.08.01  근본 원인 발견(공식 문서 확인): 오디오 스트림이 끊길 때
+                    audioStreamEnd 신호를 전혀 보내지 않아 서버가 발화가 계속
+                    이어지는 것으로 보고 턴을 끝내지 못했을 가능성. 1초 이상
+                    끊기면 자동으로 종료 신호 전송. 진단에 마지막 전송 후 경과시간 표시
+  v3.9  2026.08.01  대화 모드에 상대방 방향용 별도 API Key 입력 옵션 추가.
+                    수신 카운트 결과 턴종료 신호가 전혀 안 오고 오디오만 계속
+                    쌓이는 패턴 확인 — 동시 세션 제한/피드백 루프 여부를
+                    키 분리로 직접 실험할 수 있게 함. 진단에 키 분리 여부 표시
+  v3.8  2026.08.01  클라이언트 진단이 전부 정상인데도 기능이 안 되는 상황 대응:
+                    서버가 실제로 보내는 텍스트·오디오·턴종료 신호 수를 세어
+                    진단 줄에 노출. 오디오 수신 자체가 0인지 직접 확인 가능
+  v3.7  2026.08.01  대화 모드가 도중에 완전히 멎는 문제 진단 강화: 지금까지
+                    parse() 오류를 catch(_){}로 조용히 삼켜 "소켓은 열려있는데
+                    반응 없음" 현상의 원인을 알 수 없었다. 이제 처리 중 예외가
+                    나면 진단 줄에 오류 메시지를 그대로 노출한다.
+  v3.6  2026.08.01  음성 출력 문제 재수정: 모드별 저장·복원 로직이 계속 어긋나
+                    반복 재발해, 대화 모드는 저장값과 무관하게 항상 강제로 음성을
+                    켜도록 단순화(모드 전환·세션 시작 두 지점에서 이중 확인).
+                    진단에 실제 muted 값과 재생 컨텍스트 상태를 그대로 노출
+  v3.5  2026.08.01  음성 출력 안 됨 수정: 회의 모드에서 저장한 음소거 값이
+                    대화 모드 진입 시에도 그대로 적용돼 음성이 항상 꺼지던 문제
+                    (음소거 저장값에 모드 태그를 함께 기록해 같은 모드일 때만 복원)
+  v3.4  2026.08.01  서버의 turnComplete 신호를 감지해 즉시 마이크 개방
+                    (700ms 침묵 추정에만 의존하지 않는 확정적 근거 추가)
+  v3.3  2026.08.01  대화 모드 정지 재수정: 문장 사이 짧은 침묵마다 하드캡이 리셋되어
+                    사실상 무제한으로 막히던 구멍을 절대 시계(5초)로 차단.
+                    진단에 실제 차단 경과시간(초) 표시
+  v3.2  2026.08.01  마이크 캡처용 오디오 컨텍스트가 조용히 정지(suspended)되는
+                    문제 대응: 재생 시작 시 함께 재개, 매초 감시·자동 복구,
+                    진단 표시에 컨텍스트 상태 노출(🎙suspended 등)
+  v3.1  2026.07.31  대화 모드 정지 근본 원인 수정: 오디오가 idle 간격보다 촘촘히
+                    계속 들어올 때 스피커 점유·마이크 차단이 무한 연장되던 문제를
+                    연속 시간 하드캡(점유 8초·차단 6초)으로 해결
+  v3.0  2026.07.31  대화 모드 정지 문제 대응: 마이크 차단 상한(2초)·강제 해제,
+                    역방향 세션(ws2) 실패를 표시하고 독립 복구, 두 세션 개설 시차,
+                    대화 모드 연결 진단 표시, 서버 무응답 15초 경고
+  v2.9  2026.07.31  발화 중간 멈춤에서 원문 문단이 문장 중간에 쪼개지던 문제 수정
+                    (침묵 분리를 문장 완결까지 지연),
+                    중지 시 아직 다듬지 않은 문단을 모두 보정
+  v2.8  2026.07.31  좁은 화면에서 설정 버튼이 잘리던 문제 수정
+                    (버튼 묶음만 가로 스크롤, 설정 버튼 오른쪽 고정),
+                    사용법 링크를 설정 패널로 이동
+  v2.7  2026.07.31  회의록 목록에 소요시간 표시(이어쓰기 시 누적),
+                    문단 분리를 화제 전환 신호 기반으로 개선(80자 여유분 관찰 후 결정),
+                    사용 매뉴얼 링크 추가
+  v2.6  2026.07.31  대화 모드 음성 끊김 해결(반이중 스피커 제어,
+                    재생 중 마이크 차단으로 피드백 루프 차단, 재생 지연 상한)
+  v2.5  2026.07.31  저장 한도 실측 학습, 경고 배너에 즉시 다운로드 버튼,
+                    저장 기준(5MB/실측) 화면 표시
+  v2.4  2026.07.31  5분 주기 자동 저장, 저장 공간 감시·경고,
+                    2시간 경과 안내, 화면 문단 상한(기록은 보존)
+  v2.3  2026.07.28  다운로드 파일 맨 앞에 AI 요약 포함, 문서 구조 정리
+  v2.2  2026.07.28  사후 번역 보정(완결 문단을 맥락 기반으로 재번역),
+                    보정 켜기/끄기 토글
+  v2.1  2026.07.28  문장이 끝나는 지점에서만 문단 분리(문장 중간 절단 방지),
+                    번역문이 문장을 끝낸 뒤 문단 이동
+  v2.0  2026.07.28  원문·번역 문단번호 공유(좌우 동시 분리), 길이 초과 시 분리,
+                    회의록 문단 카드 표시, 다운로드 파일명 정리
+  v1.9  2026.07.28  음성 끊김 해결(지터 버퍼·청크 병합), 음소거 버튼,
+                    언어 변경 시 문단 분리 + 언어 태그
+  v1.8  2026.07.28  setup 필드 위치 수정(contextWindowCompression), 구성 폴백,
+                    재연결 횟수 제한, 오류 사유 표시, 버전 표기
+  v1.7  2026.07.28  대화 모드(양방향 음성) 추가, echo 중복출력 수정,
+                    자동저장·화면꺼짐방지·경과시간·글자크기 추가
+  v1.6              API Key 저장, 세션 이어쓰기 확인
+  v1.5              설정 패널 접기, AI 요약 복사(Plain Text)
+  v1.4              회의록 탭(세션 저장·AI 요약·다운로드·편집)
+  v1.3              문단 구분, 전체 복사, 6개 언어쌍
+  v1.2              2단 레이아웃(원문/번역), 고정 높이 스크롤
+  v1.1              앱 아이콘, 홈화면 추가 대응
+  v1.0              실시간 번역(텍스트 전용, 음성 출력 없음)
+
+=== Light 버전 (실험적 분기, 회의 모드 전용) ===
+  L1.2  2026.08.05  웹훅 URL 실제 값으로 교체 + 가드 조건문 버그 수정
+                    (메인 앱과 동일)
+  L1.1  2026.08.05  긴급 수정: 화면 전환(visibilitychange) 이벤트에서
+                    존재하지 않는 ws 변수를 참조해 콘솔 오류가 나던 버그.
+                    L0.4 코드 정리 때 ws 선언은 지웠는데 이 참조 하나를
+                    놓쳤음(라이트 버전은 WebSocket을 안 씀). elapsedInt로
+                    교체. 이번엔 이벤트가 실제로 발생했을 때까지 시뮬레이션
+                    해서 검증(지금까지는 로드 시점만 검증했음)
+  L1.0  2026.08.05  실사용 시간 추적(Google Apps Script 웹훅) 추가 — 메인
+                    앱과 동일. WEBHOOK_URL 배포 후 교체 필요
+  L0.9  2026.08.04  방문 통계(GoatCounter) 스크립트 추가
+  L0.8  2026.08.03  AI 요약을 여러 언어로 생성하면 기존 언어 요약이 쌓여서
+                    함께 표시됨(메인 앱과 동일)
+  L0.7  2026.08.03  다국어 번역 지원 — 원문/번역 언어를 각각 독립 선택
+                    (한국어·영어·일본어·중국어·스페인어·독일어·프랑스어).
+                    AI 요약도 7개 언어 중 선택 가능
+  L0.6  2026.08.02  랜딩 페이지로 가는 홈 링크 추가(설정 패널)
+  L0.5  2026.08.02  긴급 수정: L0.4 정리 작업이 실제로 쓰이는 핵심 함수까지
+                    같이 지웠던 버그 수정 — toggleSettings·toggleRefine
+                    (설정·다듬기 버튼이 안 열리던 원인), startElapsed·
+                    stopElapsed·startAutoSave·stopAutoSave·showSaveHint·
+                    formatDuration·getCurrentDurationSec 총 9개 함수와
+                    관련 상태 변수를 백업본에서 대조 복원. 이번엔 onclick
+                    전수 대조 + 모의 DOM 실행 테스트로 검증 후 배포
+  L0.4  2026.08.02  기본 버전 링크 주소 수정(절대 URL로 교체). 코드 정리 —
+                    아키텍처 교체 후에도 남아있던 죽은 코드(오디오 재생·
+                    스피커 조율·마이크 게이트·대화모드 진단 등 약 460줄)를
+                    제거해 2408줄 → 1949줄로 축소. muted·ws·ws2·rxCount 등
+                    더 이상 쓰이지 않는 변수·CSS 클래스도 함께 정리
+  L0.2  2026.08.02  아키텍처 전면 교체: gemini-3.1-flash-live-preview는
+                    responseModalities TEXT 단독을 지원하지 않아(1007 오류)
+                    L0.1 방식이 애초에 작동 불가였음. WebSocket Live 세션을
+                    버리고, 마이크 오디오를 침묵 감지로 문장 경계 근처에서
+                    끊어(무음 0.8초 또는 최대 8초) WAV로 인코딩한 뒤
+                    gemini-2.5-flash에 하나씩 요청하는 배치 방식으로 전환.
+                    한 번의 응답으로 원문·번역을 함께 받아 문단 그룹핑에
+                    바로 투입. 실시간 스트리밍이 아니라 청크당 5~8초
+                    지연이 있음. 추정 시간당 비용 약 $0.15(약 1/15).
+                    미검증 — 청크 경계값·번역 품질 실측 필요
+  L0.1  2026.08.02  gemini_translate.html v5.1 기준으로 분기.
+                    모델을 gemini-3.5-live-translate-preview →
+                    gemini-3.1-flash-live-preview로 교체하고
+                    responseModalities를 TEXT 전용으로 바꿔 오디오 출력
+                    자체를 없앰(시간당 약 $2.2 → 약 $0.35 추정, 약 84%↓).
+                    번역은 translationConfig 대신 systemInstruction으로
+                    지시. 대화 모드·음소거·음성재생 관련 UI와 로직은
+                    제거(convMode가 항상 false이므로 관련 분기는 죽은
+                    코드로 남아있으나 무해함). localStorage 키를
+                    gt_ → gtl_ 접두어로 분리해 메인 앱과 저장소 충돌 방지.
+                    실험 단계 — 번역 품질·지연시간 검증 필요.
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="LIVE translate">
+<link rel="apple-touch-icon" href="data:image/png;base64,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">
+<title>LIVE translate Light</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, sans-serif; background: #0a1410; color: #f0f0f0; display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+
+  /* 탭 */
+  .tab-bar { display: flex; border-bottom: 0.5px solid #1a3327; flex-shrink: 0; background: #0a1410; }
+  .tab { flex: 1; padding: 10px; font-size: 13px; font-weight: 500; text-align: center; color: #555; border: none; background: transparent; cursor: pointer; border-bottom: 2px solid transparent; -webkit-tap-highlight-color: transparent; }
+  .tab.active { color: #30d158; border-bottom-color: #30d158; }
+
+  /* 공통 */
+  .page { display: none; flex: 1; flex-direction: column; overflow: hidden; min-height: 0; }
+  .page.active { display: flex; }
+
+  /* ── 번역 탭 컨트롤 바 (항상 표시) ── */
+  .ctrl-bar { padding: 0.4rem 0.8rem; border-bottom: 0.5px solid #1a3327; display: flex; gap: 6px; align-items: center; flex-shrink: 0; background: #0a1410; }
+  /* 버튼 묶음만 가로 스크롤. 설정 버튼(⚙️)은 이 영역 밖에 있어 항상 오른쪽에 보인다 */
+  .ctrl-scroll { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .ctrl-scroll::-webkit-scrollbar { display: none; }
+  .ctrl-session { flex: 1; font-size: 12px; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .ctrl-toggle { background: transparent; border: 0.5px solid #333; border-radius: 7px; color: #888; font-size: 14px; padding: 4px 8px; cursor: pointer; flex-shrink: 0; }
+  .ctrl-toggle.open { color: #30d158; border-color: #30d15844; background: #30d15811; }
+  .voice-toggle { background: transparent; border: 0.5px solid #333; border-radius: 7px; font-size: 14px; padding: 4px 8px; cursor: pointer; flex-shrink: 0; color: #888; }
+  .voice-toggle.on { color: #30d158; border-color: #30d15844; background: #30d15811; }
+  .refine-btn { font-size:12px; padding:4px 9px; border-radius:7px; border:0.5px solid #444; background:transparent; color:#888; cursor:pointer; flex-shrink:0; white-space:nowrap; }
+  .refine-btn.on { color:#f0c674; border-color:#f0c67455; background:#f0c67411; }
+  .manual-link { font-size:12px; padding:4px 9px; border-radius:7px; border:0.5px solid #444; background:transparent; color:#888; cursor:pointer; flex-shrink:0; white-space:nowrap; text-decoration:none; display:inline-flex; align-items:center; align-self:flex-end; }
+  .manual-link:hover, .manual-link:active { color:#30d158; border-color:#30d15855; background:#30d15811; }
+  .refine-tag { display:inline-block; font-size:9px; color:#f0c674; border:0.5px solid #f0c67455; border-radius:3px; padding:0 4px; margin-right:6px; vertical-align:1px; letter-spacing:0.04em; }
+  .refining { opacity:0.75; }
+
+  /* ── 접히는 설정 패널 ── */
+  .settings { padding: 0.5rem 0.8rem; border-bottom: 0.5px solid #2a2a2a; display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; flex-shrink: 0; background: #131313; overflow: hidden; transition: max-height 0.2s ease, padding 0.2s ease; max-height: 200px; }
+  .settings.collapsed { max-height: 0; padding-top: 0; padding-bottom: 0; border-bottom: none; }
+  .sg { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+  .sg label { font-size: 10px; color: #555; }
+  input[type="password"], input[type="text"] { background: #1c1c1e; border: 0.5px solid #444; border-radius: 7px; color: #f0f0f0; font-size: 13px; padding: 5px 8px; outline: none; }
+  input[type="password"] { width: 130px; }
+  .session-input { width: 110px; }
+  select { background: #1c1c1e; border: 0.5px solid #444; border-radius: 7px; color: #f0f0f0; font-size: 13px; padding: 5px 8px; outline: none; -webkit-appearance: none; max-width: 160px; }
+  button { padding: 6px 12px; font-size: 13px; font-weight: 500; border-radius: 7px; border: none; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  #startBtn { background: #30d158; color: #fff; }
+  #startBtn:disabled { background: #1a3a5c; color: #555; }
+  #stopBtn { background: transparent; color: #ff453a; border: 0.5px solid #ff453a; }
+  #stopBtn:disabled { opacity: 0.3; }
+  #clearBtn { background: transparent; color: #888; border: 0.5px solid #444; }
+
+  .statusbar { padding: 4px 1rem; display: flex; align-items: center; gap: 7px; font-size: 11px; color: #555; border-bottom: 0.5px solid #1a1a1a; flex-shrink: 0; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #444; }
+  .dot.connected { background: #30d158; }
+  .dot.recording { background: #ff453a; animation: blink 1s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .err { color: #ff453a; margin-left: auto; font-size: 11px; }
+
+  .translate-area { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+  .col { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  .col-header { padding: 6px 1rem 5px; font-size: 11px; color: #555; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; border-bottom: 0.5px solid #1a1a1a; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; }
+  .copy-btn { font-size: 11px; color: #30d158; background: transparent; border: 0.5px solid #30d15844; border-radius: 5px; padding: 2px 8px; cursor: pointer; font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .copy-btn.copied { color: #30d158; border-color: #30d15844; }
+  .col-body { flex: 1; overflow-y: auto; padding: 0.8rem 1rem; -webkit-overflow-scrolling: touch; min-height: 0; }
+  .divider { width: 0.5px; background: #222; flex-shrink: 0; }
+  .para { margin-bottom: 14px; }
+  .para .ts { display: block; font-size: 10px; color: #3a3a3a; margin-bottom: 3px; }
+  .para .pt { font-size: 15px; line-height: 1.75; color: #e0e0e0; word-break: break-word; }
+  .para.ko .pt { color: #d0ecd0; }
+  .para.fo .pt { color: #a9cbff; }
+  .para .pt { font-size: var(--pt-size, 15px); }
+  .seg-card { border:0.5px solid #262626; border-radius:10px; padding:0.7rem 0.85rem; margin-bottom:12px; background:#151515; }
+  .seg-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; padding-bottom:6px; border-bottom:0.5px solid #222; }
+  .seg-no { font-size:10px; color:#888; background:#242424; border-radius:4px; padding:2px 7px; letter-spacing:0.03em; }
+  .seg-time { font-size:10px; color:#4a4a4a; font-variant-numeric:tabular-nums; }
+  .seg-part { margin-bottom:8px; }
+  .seg-part:last-child { margin-bottom:0; }
+  .seg-label { font-size:9px; color:#5a5a5a; letter-spacing:0.1em; margin-bottom:3px; }
+  .seg-card .para { margin-bottom:4px; }
+  .seg-card .para .ts { display:none; }
+  .lang-tag { display:inline-block; font-size:9px; color:#7a7a7a; border:0.5px solid #3a3a3a; border-radius:3px; padding:0 4px; margin-right:6px; vertical-align:1px; letter-spacing:0.05em; }
+  .elapsed { font-size: 11px; color: #666; font-variant-numeric: tabular-nums; }
+  .font-ctrl { display: flex; gap: 4px; flex-shrink: 0; }
+  .font-ctrl button { padding: 1px 7px; font-size: 11px; background: transparent; color: #777; border: 0.5px solid #333; border-radius: 5px; }
+  .wake-note { font-size: 10px; color: #4a4; }
+  .notice-banner { display:flex; align-items:center; gap:8px; padding:7px 1rem; font-size:12px; flex-shrink:0; line-height:1.5; }
+  .notice-banner.hidden { display:none; }
+  .notice-banner.info   { background:#10202e; color:#8ab4d8; border-bottom:0.5px solid #1e3a52; }
+  .notice-banner.warn   { background:#2a2410; color:#f0c674; border-bottom:0.5px solid #4a3f1a; }
+  .notice-banner.danger { background:#2e1414; color:#ff8a80; border-bottom:0.5px solid #5a2020; }
+  .notice-banner .notice-text { flex:1; }
+  .notice-close { background:transparent; border:none; color:inherit; opacity:0.6; font-size:12px; padding:2px 4px; cursor:pointer; flex-shrink:0; }
+  .notice-action { background:rgba(255,255,255,0.12); border:0.5px solid currentColor; color:inherit; font-size:11px; padding:3px 9px; border-radius:6px; cursor:pointer; flex-shrink:0; white-space:nowrap; }
+  .notice-action.hidden { display:none; }
+  .save-hint { font-size:10px; color:#4a7a4a; opacity:0.35; transition:opacity 0.3s; white-space:nowrap; }
+  .storage-label { font-size:10px; color:#555; font-weight:400; letter-spacing:0; text-transform:none; }
+  .trim-note { font-size:10px; color:#4a4a4a; border:0.5px dashed #333; border-radius:6px; padding:5px 8px; margin-bottom:10px; line-height:1.5; }
+  .version-tag { font-size: 10px; color: #3d3d3d; align-self: flex-end; margin-left: auto; padding-bottom: 2px; letter-spacing: 0.03em; }
+
+  /* ── 회의록 탭 ── */
+  .minutes-page { padding: 1rem; overflow-y: auto; flex: 1; min-height: 0; -webkit-overflow-scrolling: touch; }
+  .section-title { font-size: 12px; color: #555; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 10px; margin-top: 20px; }
+  .section-title:first-child { margin-top: 0; }
+
+  /* 현재 세션 카드 */
+  .current-card { background: #1c1c1e; border: 0.5px solid #333; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+  .current-card .name { font-size: 15px; font-weight: 600; color: #f0f0f0; margin-bottom: 4px; }
+  .current-card .meta { font-size: 12px; color: #555; margin-bottom: 12px; }
+  .action-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .action-btn { font-size: 13px; padding: 8px 14px; border-radius: 8px; border: none; cursor: pointer; font-weight: 500; }
+  .btn-summarize { background: #30d158; color: #fff; }
+  .btn-summarize:disabled { background: #1a3a5c; color: #555; }
+  .btn-download { background: #2c2c2e; color: #f0f0f0; border: 0.5px solid #444; }
+  .btn-save { background: #1d3a1d; color: #30d158; border: 0.5px solid #30d15844; }
+
+  /* 요약 결과 */
+  .summary-box { background: #111; border: 0.5px solid #2a2a2a; border-radius: 10px; padding: 1rem; margin-top: 12px; font-size: 14px; line-height: 1.8; color: #d0d0d0; white-space: pre-wrap; word-break: break-word; }
+  .summary-loading { color: #555; font-size: 13px; padding: 1rem; text-align: center; }
+
+  /* 저장된 세션 목록 */
+  .session-item { background: #1c1c1e; border: 0.5px solid #2a2a2a; border-radius: 10px; padding: 0.85rem 1rem; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .session-item:active { background: #2a2a2a; }
+  .session-info { flex: 1; min-width: 0; }
+  .session-info .sname { font-size: 14px; font-weight: 500; color: #e0e0e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session-info .smeta { font-size: 11px; color: #555; margin-top: 2px; }
+  .session-del { font-size: 12px; color: #ff453a; background: transparent; border: 0.5px solid #ff453a44; border-radius: 6px; padding: 3px 8px; cursor: pointer; flex-shrink: 0; }
+  .select-toggle-btn { font-size: 12px; color: #888; background: transparent; border: 0.5px solid #444; border-radius: 6px; padding: 3px 9px; cursor: pointer; }
+  .select-toggle-btn.on { color: #30d158; border-color: #30d15855; background: #30d15811; }
+  .bulk-action-bar { display: flex; align-items: center; gap: 10px; padding: 8px 2px; margin-bottom: 8px; }
+  .bulk-action-bar.hidden { display: none; }
+  .bulk-all-label { font-size: 13px; color: #ccc; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .bulk-del-btn { font-size: 12px; color: #fff; background: #ff453a; border: none; border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+  .bulk-del-btn:disabled { background: #ff453a44; color: #ffffff88; cursor: default; }
+  .bulk-cancel-btn { font-size: 12px; color: #888; background: transparent; border: 0.5px solid #444; border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+  .session-item.selectable { cursor: pointer; }
+  .session-checkbox { width: 18px; height: 18px; flex-shrink: 0; }
+  .empty-msg { color: #444; font-size: 13px; text-align: center; padding: 2rem 0; }
+
+  /* 세션 상세 모달 — 전체화면, 스크롤 보장 */
+  .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 100; display: flex; flex-direction: column; }
+  .modal-overlay.hidden { display: none; }
+  .modal { background: #1a1a1a; position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; }
+  .modal-header { padding: 0.75rem 1rem 0.6rem; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; border-bottom: 0.5px solid #2a2a2a; }
+  .modal-title { font-size: 15px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .modal-close { font-size: 13px; color: #30d158; background: none; border: none; cursor: pointer; padding: 4px 8px; flex-shrink: 0; }
+  .modal-body { padding: 1rem; overflow-y: scroll; -webkit-overflow-scrolling: touch; }
+  .modal-actions { padding: 0.75rem 1rem; border-top: 0.5px solid #2a2a2a; display: flex; gap: 8px; flex-shrink: 0; }
+  .modal-actions button { flex: 1; }
+  .modal-title-input { font-size: 15px; font-weight: 600; background: #2c2c2e; border: 0.5px solid #30d158; border-radius: 6px; color: #f0f0f0; padding: 4px 8px; flex: 1; outline: none; }
+  .modal-edit-btn { font-size: 12px; color: #30d158; background: transparent; border: 0.5px solid #30d15844; border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+  .modal-edit-btn.active { background: #30d158; color: #fff; border-color: #30d158; }
+  .hidden { display: none !important; }
+  .para .pt[contenteditable="true"] { outline: 1px dashed #30d15866; border-radius: 4px; padding: 2px 4px; cursor: text; }
+  .para-del { display: none; font-size: 11px; color: #ff453a; background: transparent; border: 0.5px solid #ff453a44; border-radius: 5px; padding: 1px 7px; cursor: pointer; margin-left: 8px; vertical-align: middle; }
+  .edit-mode .para-del { display: inline; }
+  .edit-save-bar { display: none; padding: 0.6rem 1rem; gap: 8px; border-top: 0.5px solid #2a2a2a; }
+  .edit-save-bar.show { display: flex; }
+  .edit-save-bar button { flex: 1; }
+  .btn-save-edit { background: #30d158; color: #fff; }
+  .btn-cancel-edit { background: transparent; color: #888; border: 0.5px solid #444; }
+
+  @media (max-width: 599px) {
+    .settings { flex-direction: column; }
+    input[type="password"] { width: 100%; }
+    .session-input { width: 100%; }
+    .btns { margin-left: 0; width: 100%; }
+    .btns button { flex: 1; }
+    .translate-area { flex-direction: column; }
+    .divider { width: 100%; height: 0.5px; }
+  }
+</style>
+<!-- 방문 통계(GoatCounter, 쿠키 없음) -->
+<script data-goatcounter="https://gsjang.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</head>
+<body>
+
+<!-- 탭 바 -->
+<div class="tab-bar">
+  <button class="tab active" onclick="switchTab('translate')">🎙 실시간 번역 (Light)</button>
+  <button class="tab" onclick="switchTab('minutes')">📋 회의록</button>
+</div>
+
+<!-- ══════════════ 번역 탭 ══════════════ -->
+<div class="page active" id="page-translate">
+
+  <!-- 항상 보이는 컨트롤 바 -->
+  <div class="ctrl-bar">
+    <!-- 좁은 화면에서는 이 영역만 가로로 스크롤되고, 설정 버튼은 항상 오른쪽에 고정된다 -->
+    <div class="ctrl-scroll">
+      <button id="startBtn" onclick="startTranslation()">시작</button>
+      <button id="stopBtn" onclick="stopTranslation()" disabled>중지</button>
+      <button id="clearBtn" onclick="clearAll()">지우기</button>
+      <button class="refine-btn on" id="refineBtn" onclick="toggleRefine()" title="문단이 끝나면 번역을 다시 다듬습니다">✨ 다듬기</button>
+      <span class="ctrl-session" id="ctrlSession">—</span>
+    </div>
+    <button class="ctrl-toggle" id="settingsToggle" onclick="toggleSettings()" title="설정">⚙️</button>
+  </div>
+
+  <!-- 접히는 설정 패널 -->
+  <div class="settings collapsed" id="settingsPanel">
+    <div class="sg">
+      <label>API Key</label>
+      <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off" />
+      <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
+        <span id="keyHint" style="font-size:10px;"></span>
+        <button onclick="clearApiKey()" style="font-size:10px;padding:2px 6px;background:transparent;color:#ff453a;border:0.5px solid #ff453a44;border-radius:4px;">키 삭제</button>
+      </div>
+    </div>
+    <div class="sg" id="sgSession">
+      <label>세션명</label>
+      <input type="text" class="session-input" id="sessionName" placeholder="예: Blackstone 미팅" />
+    </div>
+    <!-- 회의 모드 설정 -->
+    <div class="sg" id="sgMeetingLang">
+      <label>회의 언어</label>
+      <select id="srcLang">
+        <option value="auto">🌐 자동감지</option>
+        <option value="ko">한국어</option>
+        <option value="en">영어</option>
+        <option value="ja">일본어</option>
+        <option value="zh">중국어</option>
+        <option value="es">스페인어</option>
+        <option value="de">독일어</option>
+        <option value="fr">프랑스어</option>
+      </select>
+      <label style="margin-top:8px;">번역 언어</label>
+      <select id="dstLang">
+        <option value="ko" selected>한국어</option>
+        <option value="en">영어</option>
+        <option value="ja">일본어</option>
+        <option value="zh">중국어</option>
+        <option value="es">스페인어</option>
+        <option value="de">독일어</option>
+        <option value="fr">프랑스어</option>
+      </select>
+    </div>
+    <a class="manual-link" href="gemini_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
+    <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/translate.html" title="음성 출력·대화 모드가 있는 기본 버전으로 이동">🔵 기본 버전</a>
+    <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/" title="버전을 비교하고 선택하는 첫 화면으로 이동">🏠 홈</a>
+    <div class="version-tag">Light v1.2 · 2026.08.01<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
+  </div>
+
+  <!-- 공용 안내 배너 (저장 공간·긴 세션 경고) -->
+  <div class="notice-banner hidden" id="noticeBanner">
+    <span class="notice-text"></span>
+    <button class="notice-action hidden" id="noticeAction" onclick="runNoticeAction()">실행</button>
+    <button class="notice-close" onclick="hideNotice()">✕</button>
+  </div>
+
+  <div class="statusbar">
+    <span class="dot" id="dot"></span>
+    <span id="statusText">대기 중</span>
+    <span id="elapsed" class="elapsed"></span>
+    <span id="chunkStatus" class="elapsed" style="color:#30d158;"></span>
+    <span id="saveHint" class="save-hint"></span>
+    <span class="err" id="err"></span>
+    <span class="font-ctrl">
+      <button onclick="adjustFont(-1)" title="글자 작게">A−</button>
+      <button onclick="adjustFont(1)" title="글자 크게">A+</button>
+    </span>
+  </div>
+  <div class="translate-area">
+    <div class="col">
+      <div class="col-header">
+        <span id="srcLabel">원문 (영어)</span>
+        <button class="copy-btn" id="copySrc" onclick="copyCol('srcBox','copySrc')">복사</button>
+      </div>
+      <div class="col-body" id="srcBox"></div>
+    </div>
+    <div class="divider"></div>
+    <div class="col">
+      <div class="col-header">
+        <span id="dstLabel">번역 (한국어)</span>
+        <button class="copy-btn" id="copyDst" onclick="copyCol('dstBox','copyDst')">복사</button>
+      </div>
+      <div class="col-body" id="dstBox"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ 회의록 탭 ══════════════ -->
+<div class="page" id="page-minutes">
+  <div class="minutes-page" id="minutesPage">
+
+    <!-- 현재 세션 -->
+    <div class="section-title">현재 세션</div>
+    <div class="current-card" id="currentCard">
+      <div class="name" id="curName">세션 없음</div>
+      <div class="meta" id="curMeta">번역 탭에서 세션명을 입력하고 시작하세요</div>
+      <div class="action-row" id="curActions" style="display:none">
+        <select id="summaryLang" style="font-size:12px; padding:4px 6px; border-radius:6px; background:#1c1c1e; color:#ccc; border:0.5px solid #333;">
+          <option value="ko" selected>한국어 요약</option>
+          <option value="en">영어 요약</option>
+          <option value="ja">일본어 요약</option>
+          <option value="zh">중국어 요약</option>
+          <option value="es">스페인어 요약</option>
+          <option value="de">독일어 요약</option>
+          <option value="fr">프랑스어 요약</option>
+        </select>
+        <button class="action-btn btn-summarize" id="summarizeBtn" onclick="summarizeCurrent()">AI 요약 생성</button>
+        <button class="action-btn btn-download" onclick="downloadCurrent()">📥 다운로드</button>
+        <button class="action-btn btn-save" onclick="saveCurrentSession()">💾 저장</button>
+      </div>
+      <div id="summaryArea"></div>
+      <div id="summaryCopyRow" style="display:none; margin-top:8px;">
+        <button class="copy-btn" id="copySummaryBtn" onclick="copySummary('summaryArea','copySummaryBtn')">요약 복사 (Plain Text)</button>
+      </div>
+    </div>
+
+    <!-- 저장된 세션 목록 -->
+    <div class="section-title" style="display:flex;align-items:center;justify-content:space-between;">
+      <span>저장된 회의록</span>
+      <span style="display:flex;align-items:center;gap:8px;">
+        <span id="storageLabel" class="storage-label"></span>
+        <button class="select-toggle-btn" id="selectToggleBtn" onclick="toggleSelectMode()">선택</button>
+      </span>
+    </div>
+    <div id="bulkActionBar" class="bulk-action-bar hidden">
+      <label class="bulk-all-label"><input type="checkbox" id="selectAllBox" onchange="toggleSelectAll(this.checked)"> 전체 선택</label>
+      <span style="flex:1"></span>
+      <button class="bulk-del-btn" id="bulkDelBtn" onclick="bulkDeleteSelected()" disabled>선택 삭제 (0)</button>
+      <button class="bulk-cancel-btn" onclick="toggleSelectMode()">취소</button>
+    </div>
+    <div id="sessionList"><div class="empty-msg">저장된 세션이 없습니다</div></div>
+
+  </div>
+</div>
+
+<!-- 세션 상세 모달 -->
+<div class="modal-overlay hidden" id="modalOverlay" onclick="closeModalOutside(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modalTitle"></span>
+      <input class="modal-title-input hidden" id="modalTitleInput" type="text" />
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button class="modal-edit-btn" id="modalEditBtn" onclick="toggleEditMode()">✏️ 수정</button>
+        <button class="modal-close" onclick="closeModal()">닫기</button>
+      </div>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-actions">
+      <select id="summaryLangModal" style="font-size:12px; padding:4px 6px; border-radius:6px; background:#1c1c1e; color:#ccc; border:0.5px solid #333;">
+        <option value="ko" selected>한국어 요약</option>
+          <option value="en">영어 요약</option>
+          <option value="ja">일본어 요약</option>
+          <option value="zh">중국어 요약</option>
+          <option value="es">스페인어 요약</option>
+          <option value="de">독일어 요약</option>
+          <option value="fr">프랑스어 요약</option>
+      </select>
+      <button class="action-btn btn-summarize" id="modalSumBtn" onclick="summarizeModal()">AI 요약</button>
+      <button class="copy-btn" id="copyModalSumBtn" onclick="copySummary('modalSummaryArea','copyModalSumBtn')" style="padding:8px 12px;">요약 복사</button>
+      <button class="action-btn btn-download" onclick="downloadModal()">📥 다운로드</button>
+    </div>
+    <div class="edit-save-bar" id="editSaveBar">
+      <button class="btn-cancel-edit" onclick="cancelEdit()">취소</button>
+      <button class="btn-save-edit" onclick="saveEdit()">변경사항 저장</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════
+// 상태 변수
+// ══════════════════════════════════════
+let stream=null, actx=null, proc=null;
+let convMode = false;   // false=회의모드 (라이트 버전은 회의 모드 전용)
+const SR=16000;
+
+// ── 사용 기록(익명) ──
+const USAGE_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycby-uxXJ58wufxgNxXPWlGf4cxr9iaICGYeyo51EhMOXdakIdXub5KkED9q0aUNtmoCOjA/exec';
+let usageSessionId = null;
+
+function getDeviceId(){
+  let id = localStorage.getItem('gtl_deviceId');
+  if(!id){
+    id = 'd_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem('gtl_deviceId', id);
+  }
+  return id;
+}
+
+function sendUsageEvent(action, extra){
+  if(!USAGE_WEBHOOK_URL) return;
+  try{
+    const payload = Object.assign({
+      action, sessionId: usageSessionId, deviceId: getDeviceId(),
+    }, extra||{});
+    fetch(USAGE_WEBHOOK_URL, {
+      method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(payload),
+    }).catch(()=>{});
+  }catch(_){}
+}
+const langName={ko:'한국어',en:'영어',ja:'일본어',zh:'중국어',es:'스페인어',de:'독일어',fr:'프랑스어'};
+const PARA_GAP=2500;
+
+// 현재 세션 데이터
+let currentSession = null; // {name, startTime, lang, src:[], dst:[]}
+let modalSession = null;   // 모달에서 보고 있는 저장된 세션
+
+// ══════════════════════════════════════
+// 탭 전환
+// ══════════════════════════════════════
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active', ['translate','minutes'][i]===tab));
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+tab).classList.add('active');
+  if(tab==='minutes') refreshMinutesTab();
+}
+
+// ══════════════════════════════════════
+// 번역 핵심 로직
+// ══════════════════════════════════════
+function setStatus(t,txt){document.getElementById('dot').className='dot'+(t?' '+t:'');document.getElementById('statusText').textContent=txt;}
+function showErr(m){document.getElementById('err').textContent=m;}
+
+function clearAll(){
+  if(currentSession && (currentSession.src.length||currentSession.dst.length)){
+    if(!confirm('현재 화면의 번역 내용을 지웁니다.\n(저장된 회의록은 삭제되지 않습니다)')) return;
+  }
+  document.getElementById('srcBox').innerHTML='';
+  document.getElementById('dstBox').innerHTML='';
+  if(segSilenceT){clearTimeout(segSilenceT);segSilenceT=null;}
+  segId=0; segLang=''; segChars=0; dstSeg=0; dstPrevEnded=true;
+  pendingCandidateLen=null; pendingSince=null;
+  pendingSilenceBreak=false; lastSrcEndedSentence=true;
+  showErr('');
+  currentSession=null;
+  updateCurrentCard();
+  updateCtrlSession();
+}
+
+function ts(){return new Date().toTimeString().slice(0,8);}
+
+// 세션의 lang 문자열('ko|en','conv|en','ko|auto')을 사람이 읽는 표기로 변환
+function langPairLabel(langStr){
+  const[a,b]=(langStr||'ko|auto').split('|');
+  if(a==='conv') return '한국어 ↔ '+(langName[b]||b)+' (대화)';
+  const s = b==='auto' ? '자동감지' : (langName[b]||b);
+  return s+' → '+(langName[a]||a);
+}
+function dateStr(){return new Date().toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
+
+// 텍스트의 문자 종류로 언어를 판정한다.
+// 자동감지 회의에서 언어가 바뀌면 발언자가 바뀐 것으로 보고 문단을 나눈다.
+function detectScript(s){
+  if(!s) return '';
+  let ko=0, ja=0, zh=0, la=0;
+  for(const ch of s){
+    const c=ch.codePointAt(0);
+    if((c>=0xAC00&&c<=0xD7AF)||(c>=0x1100&&c<=0x11FF)||(c>=0x3130&&c<=0x318F)) ko++;
+    else if((c>=0x3040&&c<=0x309F)||(c>=0x30A0&&c<=0x30FF)) ja++;   // 가나
+    else if(c>=0x4E00&&c<=0x9FFF) zh++;                              // 한자
+    else if((c>=0x41&&c<=0x5A)||(c>=0x61&&c<=0x7A)) la++;
+  }
+  // 글자 수 비교가 아니라 우선순위로 판정한다.
+  // 한국어·중국어 화자는 영어 단어를 섞어 쓰지만("그래서 investors Yes"),
+  // 영어 화자가 한글이나 한자를 말하는 일은 없기 때문이다.
+  if(ja>0) return 'ja';            // 가나가 있으면 일본어 확정
+  if(ko>0) return 'ko';
+  if(zh>0) return 'zh';
+  if(la>=3) return 'en';           // 짧은 조각("to")은 보류해 문단을 끊지 않음
+  return '';                       // 판정 보류 → 현재 문단 유지
+}
+const scriptTag={ko:'KO', en:'EN', zh:'ZH', ja:'JA'};
+
+// 사용자가 위로 스크롤해 읽는 중이면 자동 스크롤을 멈춤
+function isNearBottom(el){ return (el.scrollHeight - el.scrollTop - el.clientHeight) < 80; }
+
+// groupKey: 같은 묶음인지 판단하는 키(감지된 언어 또는 출력 방향).
+// 침묵 2.5초 외에도 이 키가 바뀌면 문단을 나눈다.
+// ══════════════════════════════════════
+// 사후 번역 보정 — 완결된 문단을 텍스트 모델로 다시 번역해 교체
+// ══════════════════════════════════════
+function scheduleRefine(seg){
+  if(!refineOn || convMode) return;
+  if(refinedSegs.has(seg)) return;
+  refinedSegs.add(seg);
+  refineQueue.push(seg);
+  setTimeout(runRefineQueue, 1500);   // 늦게 도착하는 조각을 기다린다
+}
+
+// 아직 다듬지 않은 문단을 모두 찾아 큐에 넣는다.
+// 중지 시점에 큐가 덜 비었거나 API 호출이 실패했던 문단도 여기서 다시 챙긴다.
+function refinePendingAll(){
+  if(!refineOn || convMode || !currentSession) return 0;
+  const keys = new Set();
+  (currentSession.src||[]).forEach(x=>{ if(x.seg!=null) keys.add(String(x.seg)); });
+  let queued = 0;
+  [...keys].sort((a,b)=>Number(a)-Number(b)).forEach(k=>{
+    const dst = (currentSession.dst||[]).filter(d=>String(d.seg)===k);
+    if(!dst.length) return;                       // 번역이 없는 문단은 대상이 아니다
+    if(dst.every(d=>d.refined)) return;           // 이미 다듬어진 문단은 건너뛴다
+    refinedSegs.delete(Number(k));                // 실패했던 문단도 다시 시도할 수 있게
+    scheduleRefine(Number(k));
+    queued++;
+  });
+  return queued;
+}
+
+async function runRefineQueue(){
+  if(refineBusy || !refineQueue.length) return;
+  refineBusy = true;
+  const seg = refineQueue.shift();
+  try{ await refineSegment(seg); }catch(_){}
+  refineBusy = false;
+  if(refineQueue.length) setTimeout(runRefineQueue, 250);
+}
+
+function segTexts(seg){
+  const key=String(seg);
+  const src=(currentSession?.src||[]).filter(x=>String(x.seg)===key);
+  const dst=(currentSession?.dst||[]).filter(x=>String(x.seg)===key);
+  return { key, src, dst,
+    srcTxt: src.map(x=>x.text).join(' ').trim(),
+    dstTxt: dst.map(x=>x.text).join(' ').trim() };
+}
+
+async function refineSegment(seg){
+  if(!currentSession) return;
+  const apiKey=document.getElementById('apiKey').value.trim();
+  if(!apiKey) return;
+
+  const t=segTexts(seg);
+  if(t.srcTxt.length < 40 || !t.dstTxt) return;   // 너무 짧으면 보정 이득이 없다
+
+  const tgt = (currentSession.lang||'ko|auto').split('|')[0];
+  const tgtName = langName[tgt] || '한국어';
+
+  const prompt =
+    '아래는 회의 실시간 통역 결과다. 원문 전체 맥락을 보고 번역을 정확하고 자연스럽게 다듬어라.\n\n'
+    + '규칙:\n'
+    + '- 숫자, 비율, 금액, 날짜는 원문 그대로 유지한다. 임의로 바꾸거나 추측하지 않는다.\n'
+    + '- 실시간 번역이 어순이나 부정을 잘못 처리한 부분을 원문에 맞게 바로잡는다.\n'
+    + '- 원문에 없는 내용을 새로 만들지 않는다. 불확실하면 원래 번역을 유지한다.\n'
+    + '- 설명·머리말·따옴표 없이 다듬은 ' + tgtName + ' 번역문만 출력한다.\n\n'
+    + '[원문]\n' + t.srcTxt.slice(0,4000) + '\n\n'
+    + '[실시간 번역]\n' + t.dstTxt.slice(0,4000);
+
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+apiKey,{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      contents:[{parts:[{text:prompt}]}],
+      generationConfig:{ temperature:0.2 }
+    })
+  });
+  if(!res.ok) return;
+  const data = await res.json();
+  let out = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+  if(!out) return;
+  out = out.replace(/^```[a-z]*\s*/i,'').replace(/```$/,'').trim();
+
+  // 결과가 비정상적으로 짧거나 길면 신뢰하지 않고 원래 번역을 유지한다
+  if(out.length < t.dstTxt.length*0.4 || out.length > t.dstTxt.length*3) return;
+
+  applyRefined(t, out);
+}
+
+function applyRefined(t, refined){
+  // 화면 갱신 — 해당 문단의 번역 조각들을 하나로 합쳐 교체
+  const box=document.getElementById('dstBox');
+  const paras=[...box.querySelectorAll('.para')].filter(p=>p.dataset.gk===t.key);
+  if(paras.length){
+    const first=paras[0];
+    first.querySelector('.pt').textContent = refined;
+    if(!first.querySelector('.refine-tag')){
+      const tag=document.createElement('span');
+      tag.className='refine-tag'; tag.textContent='다듬음';
+      first.insertBefore(tag, first.querySelector('.pt'));
+    }
+    paras.slice(1).forEach(p=>p.remove());
+  }
+  // 저장 데이터 갱신 — 회의록·요약·다운로드에 반영
+  if(t.dst.length && currentSession){
+    const keep=t.dst[0];
+    keep.text=refined; keep.refined=true;
+    currentSession.dst = currentSession.dst.filter(x=>String(x.seg)!==t.key || x===keep);
+  }
+}
+
+// ══════════════════════════════════════
+// 문단 관리 — 원문/번역이 같은 문단번호(segId)를 공유한다.
+// 이렇게 해야 좌우 화면이 동시에 나뉘고 회의록에서 원문·번역이 정확히 짝지어진다.
+// 문단이 바뀌는 조건: (1) 침묵 2.5초  (2) 원문 언어 변경(발언자 전환)  (3) 길이 초과
+// ══════════════════════════════════════
+let segId = 0;
+let segSilenceT = null;
+let segLang = '';     // 현재 문단의 원문 언어
+let segChars = 0;     // 현재 문단 누적 글자 수
+const SEG_SOFT_CHARS = 600;      // 이 길이를 넘으면 분리 후보를 찾기 시작한다
+const SEG_LOOKAHEAD_CHARS = 80;  // 첫 후보 이후 이만큼 더 보고 나서 분리 여부를 정한다
+const SEG_HARD_CHARS = 1500;     // 문장 부호가 계속 없으면 이 길이에서 강제 분리
+
+// 소프트 한도를 넘긴 뒤 발견한 "문장이 끝나는 지점" 후보.
+// 곧바로 자르지 않고, 다음에 들어오는 말이 화제를 이어가는지 바꾸는지 보고 나서 정한다.
+// 서버 메시지 처리 중 예외가 나면 지금까지는 catch(_){}로 조용히 삼켜져
+// "소켓은 열려 있는데 아무 반응이 없다"는 현상의 원인을 알 수 없었다.
+// 이제 마지막 오류를 기록해 진단 줄에 그대로 노출한다.
+let lastParseError = null;
+let lastParseErrorAt = 0;
+
+let pendingCandidateLen = null;  // 가장 최근 후보 지점의 누적 글자수
+let pendingSince = null;         // 첫 후보가 나온 시점의 누적 글자수(여유분 측정 기준)
+
+// 침묵으로 문단을 끊으려 했지만 문장이 아직 안 끝난 경우, 문장이 끝날 때까지 미룬다.
+// 이 처리가 없으면 발화 중간의 짧은 멈춤에서 문장이 두 문단으로 쪼개진다.
+let pendingSilenceBreak = false;
+let lastSrcEndedSentence = true;
+
+// 새 발언이 화제를 바꾸는지/이어가는지 앞부분 단어로 가늠한다.
+// 확신이 없는 대부분의 경우는 null을 반환해 안전하게 "여유분 소진" 규칙으로 넘긴다.
+const CUE_SHIFT = [
+  '그리고 나서','그다음으로','다음으로','한편,','한편 ','자 그럼','그럼 이제',
+  '참고로 말씀드리면','추가로 말씀드리면','질문 하나 더','다른 질문','다음 질문','또 다른',
+  '화제를 바꿔서','다른 얘기로',
+  'so,','now,','next,','moving on','one more thing','by the way','also,','additionally,',
+  'switching to','another question',
+];
+const CUE_CONTINUE = [
+  '그리고','그래서','하지만','그런데','근데','왜냐하면','즉','다시 말해','게다가','또한',
+  'and ','but ','so ','because ','however,','also ','moreover,','in addition,',
+];
+function classifyCue(text){
+  const t = String(text||'').trim();
+  const tl = t.toLowerCase();
+  for(const c of CUE_SHIFT){ if(t.startsWith(c) || tl.startsWith(c.toLowerCase())) return 'shift'; }
+  for(const c of CUE_CONTINUE){ if(t.startsWith(c) || tl.startsWith(c.toLowerCase())) return 'continue'; }
+  return null;
+}
+
+// 번역문은 원문보다 늦게 도착한다. 원문이 문단을 넘겨도
+// 번역이 문장을 끝낼 때까지 기다렸다가 따라 넘어가게 한다.
+let dstSeg = 0;
+let dstPrevEnded = true;
+
+// ── 사후 번역 보정 ──
+// 실시간 통역은 문장이 끝나기 전에 번역을 내보내므로 어순·부정·중의어에서 오류가 난다.
+// 문단이 완결되면 원문 전체를 다시 보내 정확한 번역으로 교체한다.
+let refineOn = true;
+const refinedSegs = new Set();
+let refineQueue = [];
+let refineBusy = false;
+
+// 문장이 끝났는지 판정 — 영어·한국어(. ! ?)와 중국어·일본어(。！？)를 함께 본다.
+// 뒤에 붙는 인용부호나 괄호도 문장 끝으로 인정한다.
+function endsSentence(t){
+  return /[.!?。！？…]["'\u201D\u2019)\]\u3011\u300D\u300F]*\s*$/.test(String(t).trim());
+}
+
+function bumpSegment(){
+  const finished = segId;      // 지금 떠나는 문단은 완결된 것
+  segId++; segLang=''; segChars=0;
+  pendingCandidateLen=null; pendingSince=null;
+  pendingSilenceBreak=false; lastSrcEndedSentence=true;
+  if(refineOn && !convMode) scheduleRefine(finished);
+}
+
+// 말이 2.5초 이상 끊겼을 때. 문장이 완결된 상태라면 바로 나누고,
+// 문장 중간이라면 다음에 문장이 끝나는 시점까지 분리를 미룬다.
+function onSilenceTimeout(){
+  segSilenceT = null;
+  if(lastSrcEndedSentence) bumpSegment();
+  else pendingSilenceBreak = true;
+}
+
+// 원문이 도착할 때 호출해 문단 전환 여부를 판단한다.
+// 우선순위: ① 발언자가 바뀐 경우(언어 전환) 즉시 분리
+//          ② 그 외엔 대기 중인 후보가 있을 때만, 지금 들어온 말이
+//             화제를 바꾸는지(즉시 분리) / 이어가는지(계속 대기) 판단
+function noteSource(text){
+  const lang = detectScript(text);
+  if(lang && segLang && lang !== segLang){
+    bumpSegment();   // 발언자 전환 — 최우선, 즉시 분리
+  } else if(pendingCandidateLen!=null){
+    const cue = classifyCue(text);
+    if(cue==='shift' || (segChars - pendingSince) >= SEG_LOOKAHEAD_CHARS){
+      // 분리하기로 결정했다. 그런데 그 사이(후보 지점 이후) 새로운 문장이
+      // 이미 시작돼 아직 안 끝난 상태라면, 지금 자르면 그 문장이 두 문단으로
+      // 쪼개진다. 침묵 분리와 같은 방식으로 — 지금 당장 자르지 않고
+      // 문장이 끝날 때까지 미룬다.
+      if(lastSrcEndedSentence) bumpSegment();
+      else pendingSilenceBreak = true;
+    }
+    // cue==='continue' 이거나 아직 여유분이 남아있으면 같은 문단에 계속 이어붙인다
+  }
+  if(lang && !segLang) segLang = lang;
+
+  if(segSilenceT) clearTimeout(segSilenceT);
+  segSilenceT = setTimeout(onSilenceTimeout, PARA_GAP);
+
+  const before = segId;
+  segChars += text.length;
+  return { lang, seg: before };
+}
+
+// 텍스트를 붙인 뒤 이 문단이 분리 후보를 남겼는지, 강제 분리 한도를 넘었는지 기록한다.
+// 실제 분리는 여기서 하지 않고 noteSource가 다음 청크를 볼 때 판단한다 —
+// 그래야 "몇 글자 더 보고 나서 정한다"가 정확히 청크 경계에서 이루어진다.
+function noteSourceAfter(lastText){
+  lastSrcEndedSentence = endsSentence(lastText);
+
+  // 침묵으로 미뤄둔 분리가 있고 이제 문장이 끝났다면, 이 문장까지 담고 나눈다
+  if(pendingSilenceBreak && lastSrcEndedSentence){
+    pendingSilenceBreak = false;
+    bumpSegment();
+    return;
+  }
+
+  if(segChars <= SEG_SOFT_CHARS){ pendingCandidateLen=null; pendingSince=null; return; }
+  if(lastSrcEndedSentence){
+    if(pendingCandidateLen===null) pendingSince = segChars;
+    pendingCandidateLen = segChars;
+  }
+  if(segChars > SEG_HARD_CHARS){
+    bumpSegment();   // 안전장치: 문장 부호 없이 계속 이어지면 강제 분리
+  }
+}
+
+// 번역문 추가 — 문장을 끝낸 뒤에만 문단번호를 따라간다.
+// wantSeg: 같은 메시지의 원문이 쓴 문단번호. 이걸 넘겨받아야 좌우가 한 조각도 밀리지 않는다.
+function appendDstText(text, cls, storeArr, wantSeg){
+  const target = (wantSeg!=null) ? Number(wantSeg) : segId;
+  // 뒤로는 절대 가지 않고, 문장을 끝냈거나 2문단 이상 뒤처졌을 때만 앞으로 이동
+  if(target > dstSeg && (dstPrevEnded || (target - dstSeg) >= 2)) dstSeg = target;
+  appendText('dstBox', text, cls, storeArr, dstSeg, '');
+  dstPrevEnded = endsSentence(text);
+}
+
+// 화면에 유지할 문단 수 상한. 넘으면 오래된 것을 화면에서만 정리한다.
+// 회의록 데이터(currentSession)는 그대로 보존되므로 기록은 손실되지 않는다.
+const MAX_DOM_PARAS = 400;
+
+function trimBox(box){
+  const paras=box.querySelectorAll('.para');
+  const excess=paras.length-MAX_DOM_PARAS;
+  if(excess<=0) return;
+  if(!box.querySelector('.trim-note')){
+    const n=document.createElement('div');
+    n.className='trim-note';
+    n.textContent='앞부분 문단은 화면에서만 정리했습니다. 회의록에는 전부 남아 있습니다.';
+    box.insertBefore(n, box.firstChild);
+  }
+  for(let i=0;i<excess;i++) if(paras[i]) paras[i].remove();
+}
+
+function appendText(boxId, text, cls, storeArr, segKey, tagLang){
+  if(!text||!text.trim())return;
+  const box=document.getElementById(boxId);
+  const stick=isNearBottom(box);        // 추가 전에 위치 판단
+  const key=String(segKey);
+  const last=box.lastElementChild;
+
+  if(last && last.dataset.gk===key){
+    last.querySelector('.pt').textContent+=' '+text.trim();
+    if(storeArr&&storeArr.length) storeArr[storeArr.length-1].text+=' '+text.trim();
+  } else {
+    const p=document.createElement('div');
+    p.className='para'+(cls?' '+cls:'');
+    p.dataset.gk=key;
+    const tsEl=document.createElement('span'); tsEl.className='ts'; tsEl.textContent=ts();
+    p.appendChild(tsEl);
+    if(scriptTag[tagLang]){
+      const tg=document.createElement('span'); tg.className='lang-tag'; tg.textContent=scriptTag[tagLang];
+      p.appendChild(tg);
+    }
+    const ptEl=document.createElement('span'); ptEl.className='pt'; ptEl.textContent=text.trim();
+    p.appendChild(ptEl);
+    box.appendChild(p);
+    if(storeArr) storeArr.push({seg:key, time:ts(), text:text.trim(), lang:tagLang||''});
+  }
+  trimBox(box);
+  if(stick) box.scrollTop=box.scrollHeight;
+}
+
+// ── 글자 크기 ──
+function applyFont(px){
+  document.documentElement.style.setProperty('--pt-size', px+'px');
+  localStorage.setItem('gtl_fontsize', String(px));
+}
+function adjustFont(delta){
+  const cur=parseInt(localStorage.getItem('gtl_fontsize')||'15',10);
+  applyFont(Math.max(11, Math.min(26, cur+delta)));
+}
+
+// ── 화면 꺼짐 방지 (회의 중 세션 끊김 예방) ──
+let wakeLock=null;
+async function acquireWakeLock(){
+  try{
+    if('wakeLock' in navigator){
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', ()=>{ wakeLock=null; });
+    }
+  }catch(_){ wakeLock=null; }
+}
+function releaseWakeLock(){ try{ wakeLock&&wakeLock.release(); }catch(_){} wakeLock=null; }
+// 앱이 다시 포그라운드로 오면 재획득
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='visible' && elapsedInt && !wakeLock) acquireWakeLock();
+});
+
+// ── 저장 용량 감시 ──
+// Safari의 사이트당 저장 한도는 약 5MB. 한도를 넘으면 저장이 실패하므로 미리 경고한다.
+// 5MB는 가정값이다. 저장이 한 번 실패하면 그 순간의 실제 사용량을
+// 진짜 한도로 학습해 이후 퍼센트를 정확하게 만든다.
+const QUOTA_DEFAULT = 5*1024*1024;
+const QUOTA_MIN_LEARN = 512*1024;   // 이보다 작으면 용량 문제가 아니라고 판단
+let learnedQuota = 0;               // 메모리 캐시 (저장 자체가 막힌 경우 대비)
+
+function quotaBytes(){
+  if(learnedQuota >= QUOTA_MIN_LEARN) return learnedQuota;
+  let v=0;
+  try{ v=parseInt(localStorage.getItem('gtl_quota')||'0',10); }catch(_){}
+  if(v >= QUOTA_MIN_LEARN){ learnedQuota=v; return v; }
+  return QUOTA_DEFAULT;
+}
+
+function isQuotaLearned(){ return quotaBytes() !== QUOTA_DEFAULT; }
+
+// 저장이 실패한 시점에 들어 있는 양은 '확실히 들어가는 크기'다.
+// 이 값을 한도로 삼으면 이후 경고 시점이 실제와 맞는다.
+function learnQuota(){
+  const used = storageUsedBytes();
+  if(used < QUOTA_MIN_LEARN) return null;   // 시크릿 모드·저장 차단 등 다른 원인
+  if(used > learnedQuota) learnedQuota = used;
+  try{
+    const prev=parseInt(localStorage.getItem('gtl_quota')||'0',10);
+    if(used > prev) localStorage.setItem('gtl_quota', String(used));
+  }catch(_){}                                // 작은 키조차 못 쓰면 메모리 캐시만 사용
+  return learnedQuota;
+}
+
+function storageUsedBytes(){
+  let n=0;
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      n += k.length + (localStorage.getItem(k)||'').length;
+    }
+  }catch(_){}
+  return n*2;   // UTF-16 기준 근사치
+}
+
+function storagePct(){ return Math.min(100, Math.round(storageUsedBytes()/quotaBytes()*100)); }
+
+function checkStorage(){
+  const pct=storagePct();
+  updateStorageLabel(pct);
+  if(pct>=90){
+    const act = (currentSession && (currentSession.src.length||currentSession.dst.length))
+      ? { label:'지금 다운로드', fn:()=>downloadCurrent() } : null;
+    showNotice('저장 공간이 '+pct+'% 찼습니다. 회의록을 다운로드하고 오래된 기록을 삭제해 주세요.', 'danger', act);
+  } else if(pct>=70){
+    showNotice('저장 공간 '+pct+'% 사용 중입니다. 오래된 회의록을 정리하는 것이 좋습니다.', 'warn');
+  }
+  return pct;
+}
+
+function updateStorageLabel(pct){
+  const el=document.getElementById('storageLabel');
+  if(!el) return;
+  const v = (pct==null) ? storagePct() : pct;
+  const mb = (quotaBytes()/1024/1024);
+  const basis = isQuotaLearned()
+    ? ('실측 '+(Math.round(mb*10)/10)+'MB')
+    : (Math.round(mb)+'MB 기준');
+  el.textContent='저장 공간 '+v+'% · '+basis;
+  el.style.color = v>=90 ? '#ff453a' : (v>=70 ? '#f0c674' : '#555');
+}
+
+// ── 공용 안내 배너 ──
+let noticeActionFn=null;
+function runNoticeAction(){ if(noticeActionFn) noticeActionFn(); }
+
+// action: {label, fn} — 경고만 띄우지 않고 바로 조치할 수 있게 한다
+function showNotice(text, kind, action){
+  const b=document.getElementById('noticeBanner');
+  if(!b) return;
+  b.className='notice-banner '+(kind||'info');
+  b.querySelector('.notice-text').textContent=text;
+  const btn=document.getElementById('noticeAction');
+  if(action && btn){
+    btn.textContent=action.label;
+    btn.classList.remove('hidden');
+    noticeActionFn=action.fn;
+  } else if(btn){
+    btn.classList.add('hidden');
+    noticeActionFn=null;
+  }
+  b.classList.remove('hidden');
+}
+function hideNotice(){
+  const b=document.getElementById('noticeBanner');
+  if(b) b.classList.add('hidden');
+  noticeActionFn=null;
+}
+
+
+
+// ── 설정 저장/불러오기 ──
+function toggleSettings(){
+  const panel = document.getElementById('settingsPanel');
+  const btn = document.getElementById('settingsToggle');
+  const collapsed = panel.classList.toggle('collapsed');
+  btn.classList.toggle('open', !collapsed);
+}
+
+function toggleRefine(){
+  refineOn = !refineOn;
+  const b=document.getElementById('refineBtn');
+  b.classList.toggle('on', refineOn);
+  b.textContent = refineOn ? '✨ 다듬기' : '✨ 다듬기 끔';
+  localStorage.setItem('gtl_refine', refineOn?'1':'0');
+}
+
+function saveSettings(){
+  const key = document.getElementById('apiKey').value.trim();
+  if(key) localStorage.setItem('gtl_apikey', key);
+  const sl = document.getElementById('srcLang')?.value;
+  const dl = document.getElementById('dstLang')?.value;
+  if(sl) localStorage.setItem('gtl_srcLang', sl);
+  if(dl) localStorage.setItem('gtl_dstLang', dl);
+}
+
+function loadSettings(){
+  const key = localStorage.getItem('gtl_apikey');
+  if(key){ document.getElementById('apiKey').value=key; showKeySaved(true); }
+  const setSel=(id,val)=>{
+    const s=document.getElementById(id);
+    if(s && val && [...s.options].some(o=>o.value===val)) s.value=val;
+  };
+  setSel('srcLang', localStorage.getItem('gtl_srcLang'));
+  setSel('dstLang', localStorage.getItem('gtl_dstLang'));
+  const fs = parseInt(localStorage.getItem('gtl_fontsize')||'15',10);
+  if(fs>=11 && fs<=26) applyFont(fs);
+  const rv = localStorage.getItem('gtl_refine');
+  if(rv==='0'){ refineOn=false; const rb=document.getElementById('refineBtn');
+    if(rb){ rb.classList.remove('on'); rb.textContent='✨ 다듬기 끔'; } }
+  updateLabels();
+}
+
+function showKeySaved(saved){
+  const hint = document.getElementById('keyHint');
+  if(!hint) return;
+  hint.textContent = saved ? '✅ 저장된 키 사용 중' : '';
+  hint.style.color = '#30d158';
+}
+
+function clearApiKey(){
+  if(!confirm('저장된 API Key를 삭제하시겠습니까?')) return;
+  localStorage.removeItem('gtl_apikey');
+  document.getElementById('apiKey').value='';
+  showKeySaved(false);
+}
+
+// 입력 시 자동 저장
+document.getElementById('apiKey').addEventListener('change', ()=>{
+  saveSettings();
+  showKeySaved(!!document.getElementById('apiKey').value.trim());
+});
+// targetLang listener moved to meetingLang/convLang
+
+function updateCtrlSession(){
+  const el = document.getElementById('ctrlSession');
+  if(!el) return;
+  if(currentSession && currentSession.name){
+    const[dst]=currentSession.lang.split('|');
+    el.textContent = currentSession.name + ' · ' + (langName[dst]||dst);
+  } else {
+    const src = document.getElementById('srcLang')?.value || 'auto';
+    const dst = document.getElementById('dstLang')?.value || 'ko';
+    const srcL = src==='auto'?'자동':langName[src]||src;
+    el.textContent = srcL+' → '+(langName[dst]||dst);
+  }
+}
+
+function updateLabels(){
+  const src = document.getElementById('srcLang')?.value || 'auto';
+  const dst = document.getElementById('dstLang')?.value || 'ko';
+  const srcLabel = src==='auto' ? '자동감지 (다국어)' : (langName[src]||src);
+  document.getElementById('srcLabel').textContent='원문 ('+srcLabel+')';
+  document.getElementById('dstLabel').textContent='번역 ('+(langName[dst]||dst)+')';
+  updateCtrlSession();
+}
+document.getElementById('srcLang')?.addEventListener('change', ()=>{ saveSettings(); updateLabels(); });
+document.getElementById('dstLang')?.addEventListener('change', ()=>{ saveSettings(); updateLabels(); });
+updateLabels();
+loadSettings();
+
+async function copyCol(boxId,btnId){
+  const text=Array.from(document.getElementById(boxId).querySelectorAll('.pt')).map(el=>el.textContent.trim()).filter(Boolean).join('\n\n');
+  try{await navigator.clipboard.writeText(text);}catch(_){const ta=document.createElement('textarea');ta.value=text;ta.style.cssText='position:fixed;opacity:0';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);}
+  const btn=document.getElementById(btnId);btn.textContent='완료';btn.classList.add('copied');
+  setTimeout(()=>{btn.textContent='복사';btn.classList.remove('copied');},1500);
+}
+
+
+// ══════════════════════════════════════════════
+// 배치 처리 아키텍처 — WebSocket Live 세션 대신 오디오를 문장 경계 근처에서
+// 잘라 짧은 조각으로 만들고, 일반 텍스트 모델(gemini-2.5-flash)에 하나씩
+// 요청해 [원문, 번역]을 한 번에 받는다. Live API의 "네이티브 오디오" 계열
+// 모델은 TEXT 전용 응답을 지원하지 않아(1007 오류) 오디오 출력이 강제로
+// 청구되는데, 이 방식은 애초에 오디오 출력 자체가 없어 요금이 크게 준다
+// (추정 시간당 약 $2.2 → 약 $0.15, 약 1/15 수준). 대신 실시간 스트리밍이
+// 아니라 몇 초 단위로 도착하는 방식이라 체감 지연이 늘어난다.
+const BATCH_MODEL = 'gemini-2.5-flash';
+const SILENCE_RMS = 0.010;          // 이 RMS 미만이면 "조용함"으로 판단(기기·환경에 따라 조정 필요)
+const SILENCE_MS = 800;             // 이만큼 조용하면 지금까지 모은 것을 하나의 청크로 확정
+const MAX_CHUNK_MS = 8000;          // 침묵이 없어도 이 길이가 되면 강제로 끊는다(지연 상한)
+const MIN_CHUNK_MS = 500;           // 이보다 짧으면 침묵 감지로 끊지 않는다(너무 잘게 쪼개지는 것 방지)
+const PRECHUNK_TRIM_MS = 300;       // 계속 조용하기만 할 때, 버퍼를 비우면서 남겨둘 최근 분량(발화 시작을 놓치지 않기 위함)
+
+let chunkBuf = [];        // 현재 조각에 쌓이고 있는 Float32Array 묶음
+let chunkSamples = 0;
+let silentSamples = 0;
+let hasSpeechInChunk = false;
+
+let chunkQueue = [];      // 완성된 조각들의 대기열(순서 보장을 위해 한 번에 하나씩 처리)
+let chunkProcessing = false;
+let lastContextText = ''; // 직전 조각의 원문 끝부분 — 다음 요청에 맥락으로 함께 보낸다
+let chunkSeq = 0;         // 진단용 — 지금까지 보낸/받은 조각 수
+
+function buildTranslatePrompt(targetLangName){
+  return '당신은 실시간 회의 통역사입니다. 첨부된 오디오 조각을 듣고 다음을 JSON으로 답하세요.\n'
+    + '- source_text: 들린 내용을 그대로 받아적은 원문(원래 발화된 언어 그대로, 여러 언어가 섞여도 그대로)\n'
+    + '- translation: 그 내용을 자연스러운 '+targetLangName+'로 번역한 것\n'
+    + '- language: 감지된 원문 언어의 BCP-47 코드(예: en, zh, ja, ko)\n\n'
+    + '이 오디오는 더 긴 회의를 몇 초 단위로 잘라낸 조각 중 하나이므로 문장이 중간에서 '
+    + '시작되거나 끝날 수 있습니다. 있는 그대로, 잘린 문장이면 잘린 대로 처리하세요. '
+    + '오디오에 의미 있는 발화가 전혀 없다면(침묵·잡음뿐) source_text와 translation을 '
+    + '둘 다 빈 문자열로 두세요. 발화가 이미 '+targetLangName+'라면 source_text만 채우고 '
+    + 'translation은 빈 문자열로 두세요. 설명이나 인사말 없이 지정된 JSON 필드만 채우세요.';
+}
+
+// 16bit PCM WAV로 인코딩 후 base64 문자열로 반환
+function encodeWAV(samples, sampleRate){
+  const numSamples = samples.length;
+  const buffer = new ArrayBuffer(44 + numSamples*2);
+  const view = new DataView(buffer);
+  const writeStr = (offset, str) => { for(let i=0;i<str.length;i++) view.setUint8(offset+i, str.charCodeAt(i)); };
+  writeStr(0,'RIFF'); view.setUint32(4, 36+numSamples*2, true); writeStr(8,'WAVE');
+  writeStr(12,'fmt '); view.setUint32(16,16,true); view.setUint16(20,1,true); view.setUint16(22,1,true);
+  view.setUint32(24,sampleRate,true); view.setUint32(28,sampleRate*2,true); view.setUint16(32,2,true); view.setUint16(34,16,true);
+  writeStr(36,'data'); view.setUint32(40,numSamples*2,true);
+  let off=44;
+  for(let i=0;i<numSamples;i++){
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, s<0 ? s*0x8000 : s*0x7FFF, true);
+    off += 2;
+  }
+  let binary='';
+  const bytes = new Uint8Array(buffer);
+  const CH = 0x8000;   // 한 번에 넘기는 문자 수 제한(콜스택 오버플로 방지)
+  for(let i=0;i<bytes.length;i+=CH){
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i+CH));
+  }
+  return btoa(binary);
+}
+
+// 진행 표시 — 큐에 쌓인 조각 수를 상태바 옆에 보여준다.
+// 배치 방식은 응답을 몇 초씩 기다리므로, 아무 표시가 없으면 멈춘 것처럼 보인다.
+function updateChunkStatus(){
+  const el = document.getElementById('chunkStatus');
+  if(!el) return;
+  if(chunkProcessing || chunkQueue.length){
+    el.textContent = '⏳ 처리 중'+(chunkQueue.length ? ' (대기 '+chunkQueue.length+')' : '');
+  } else {
+    el.textContent = '';
+  }
+}
+
+async function sendChunkToGemini(key, base64Wav, contextText, targetLangName){
+  const systemInstruction = buildTranslatePrompt(targetLangName);
+  const contextPart = contextText ? ('[직전 맥락] '+contextText) : '';
+  const body = {
+    systemInstruction: { parts: [{ text: systemInstruction }] },
+    contents: [{
+      role: 'user',
+      parts: [
+        ...(contextPart ? [{ text: contextPart }] : []),
+        { inlineData: { mimeType: 'audio/wav', data: base64Wav } },
+      ],
+    }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          source_text: { type: 'STRING' },
+          translation: { type: 'STRING' },
+          language: { type: 'STRING' },
+        },
+        required: ['source_text','translation','language'],
+      },
+    },
+  };
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+BATCH_MODEL+':generateContent?key='+key, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+  });
+  if(!res.ok){
+    const t = await res.text().catch(()=> '');
+    throw new Error('HTTP '+res.status+' '+t.slice(0,200));
+  }
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if(!text) throw new Error('응답에 내용 없음');
+  return JSON.parse(text);
+}
+
+function handleChunkResult(result){
+  const inTxt = (result.source_text||'').trim();
+  const outTxt = (result.translation||'').trim();
+  if(!inTxt) return;   // 침묵·의미없음으로 판단된 조각은 건너뛴다
+
+  const srcArr = currentSession ? currentSession.src : null;
+  const dstArr = currentSession ? currentSession.dst : null;
+
+  // 기존 문단 그룹핑(언어전환·길이·문장중간보호)을 그대로 재사용한다
+  const info = noteSource(inTxt);
+  appendText('srcBox', inTxt, '', srcArr, info.seg, info.lang);
+  // 원문·번역이 같은 API 응답 안에서 함께 오므로, 스트리밍 때처럼 번역이
+  // 뒤처지는 문제 자체가 구조적으로 없다 — 항상 같은 문단번호를 그대로 쓴다.
+  if(outTxt) appendDstText(outTxt, 'ko', dstArr, info.seg);
+  noteSourceAfter(inTxt);
+
+  lastContextText = inTxt.slice(-120);   // 다음 조각에 넘길 맥락
+  lastServerMsgAt = Date.now();
+  showErr('');
+}
+
+async function processQueue(){
+  if(chunkProcessing || !chunkQueue.length) return;
+  chunkProcessing = true;
+  updateChunkStatus();
+  const chunk = chunkQueue.shift();
+  try{
+    const wav = encodeWAV(chunk, SR);
+    const targetLangName = langName[currentTargetLang] || '한국어';
+    const result = await sendChunkToGemini(currentKey, wav, lastContextText, targetLangName);
+    handleChunkResult(result);
+    chunkSeq++;
+  }catch(err){
+    lastParseError = '청크 '+chunkSeq+': '+(err?.message||String(err));
+    lastParseErrorAt = Date.now();
+    showErr('처리 오류: '+(err?.message||err));
+  }
+  chunkProcessing = false;
+  updateChunkStatus();
+  if(chunkQueue.length) processQueue();
+}
+
+function enqueueChunk(float32Array){
+  chunkQueue.push(float32Array);
+  processQueue();
+}
+
+// 지금까지 모은 조각을 확정해 대기열에 넣는다(발화가 전혀 없었으면 버린다)
+function finalizeChunk(){
+  if(chunkSamples === 0 || !hasSpeechInChunk){
+    chunkBuf = []; chunkSamples = 0; silentSamples = 0; hasSpeechInChunk = false;
+    return;
+  }
+  const merged = new Float32Array(chunkSamples);
+  let off = 0;
+  for(const b of chunkBuf){ merged.set(b, off); off += b.length; }
+  chunkBuf = []; chunkSamples = 0; silentSamples = 0; hasSpeechInChunk = false;
+  enqueueChunk(merged);
+}
+
+// 진행 중 중지를 누른 경우, 남아있는 오디오를 버리지 않고 마지막 조각으로 전송한다
+function flushPendingChunk(){
+  if(chunkSamples > 0 && hasSpeechInChunk) finalizeChunk();
+  else { chunkBuf=[]; chunkSamples=0; silentSamples=0; hasSpeechInChunk=false; }
+}
+
+// ── 마이크 프로세서(배치용) — 침묵 감지로 문장 경계 근처에서 오디오를 자른다 ──
+function startMicProcessorBatch(){
+  if(proc || !actx || !stream) return;
+  const src = actx.createMediaStreamSource(stream);
+  proc = actx.createScriptProcessor(2048,1,1);
+  const silenceSamples = Math.round(SR * SILENCE_MS/1000);
+  const maxSamples = Math.round(SR * MAX_CHUNK_MS/1000);
+  const minSamples = Math.round(SR * MIN_CHUNK_MS/1000);
+  const preTrimSamples = Math.round(SR * PRECHUNK_TRIM_MS/1000);
+
+  proc.onaudioprocess = ev => {
+    const data = ev.inputBuffer.getChannelData(0);
+    let sum=0; for(let i=0;i<data.length;i++) sum += data[i]*data[i];
+    const rms = Math.sqrt(sum/data.length);
+
+    chunkBuf.push(new Float32Array(data));   // 콜백 버퍼는 재사용되므로 복사해서 보관
+    chunkSamples += data.length;
+    if(rms < SILENCE_RMS){ silentSamples += data.length; }
+    else { silentSamples = 0; hasSpeechInChunk = true; }
+
+    if(hasSpeechInChunk && silentSamples >= silenceSamples && chunkSamples >= minSamples){
+      finalizeChunk();
+      return;
+    }
+    if(chunkSamples >= maxSamples){
+      finalizeChunk();
+      return;
+    }
+    // 발화 시작 전 침묵만 계속되면 버퍼가 무한정 커지므로, 최근 일부만 남기고 비운다
+    if(!hasSpeechInChunk && chunkSamples > SR*3){
+      const merged = new Float32Array(chunkSamples);
+      let off=0; for(const b of chunkBuf){ merged.set(b, off); off+=b.length; }
+      chunkBuf = [merged.slice(-preTrimSamples)];
+      chunkSamples = chunkBuf[0].length;
+      silentSamples = chunkSamples;
+    }
+  };
+  src.connect(proc);
+  proc.connect(actx.destination);
+}
+
+let currentKey = '';
+let currentTargetLang = '';
+let currentSessionName = '';
+
+// ── 경과시간·자동저장 (v5.1 기준 복원, 대화모드·재생 관련 참조는 제거) ──
+let elapsedInt=null, startedAt=0;
+let longNoticeShown=false;
+let silentNoticeShown=false;
+let lastServerMsgAt=0;
+let autoSaveInt=null;
+const AUTOSAVE_MS = 5*60*1000;   // 5분
+
+function startAutoSave(){
+  clearInterval(autoSaveInt);
+  autoSaveInt=setInterval(()=>{
+    if(usageSessionId) sendUsageEvent('heartbeat');
+    if(!currentSession) return;
+    if(!currentSession.src.length && !currentSession.dst.length) return;
+    // durationSec 본값은 중지 시에만 확정한다. 자동 저장에는 지금까지의
+    // 진행 시간을 실은 스냅샷만 저장해, 다음 자동 저장 때 중복 합산되지 않게 한다.
+    const snapshot = {...currentSession, durationSec: getCurrentDurationSec(currentSession)};
+    if(upsertSession(snapshot)){
+      showSaveHint('자동 저장 ' + new Date().toTimeString().slice(0,5));
+      checkStorage();
+    }
+  }, AUTOSAVE_MS);
+}
+function stopAutoSave(){ clearInterval(autoSaveInt); autoSaveInt=null; }
+
+function showSaveHint(text){
+  const el=document.getElementById('saveHint');
+  if(!el) return;
+  el.textContent='💾 '+text;
+  el.style.opacity='1';
+  setTimeout(()=>{ el.style.opacity='0.35'; }, 2500);
+}
+function startElapsed(){
+  startedAt=Date.now();
+  clearInterval(elapsedInt);
+  elapsedInt=setInterval(()=>{
+    const s=Math.floor((Date.now()-startedAt)/1000);
+    const mm=String(Math.floor(s/60)%60).padStart(2,'0'), ss=String(s%60).padStart(2,'0');
+    const el=document.getElementById('elapsed');
+    if(el) el.textContent=(s>=3600? Math.floor(s/3600)+':' : '')+mm+':'+ss;
+    // 마이크 컨텍스트가 정지 상태로 빠졌는지 매초 확인해 즉시 되살린다.
+    // iOS는 백그라운드 전환 등으로 컨텍스트를 조용히 정지시키는 경우가 있는데,
+    // 이 감시가 없으면 화면엔 아무 표시 없이 마이크만 영구히 죽는다.
+    if(actx && actx.state==='suspended'){
+      try{ actx.resume(); }catch(_){}
+      showNotice('마이크가 일시 정지되어 자동으로 재개했습니다. 계속 안 되면 중지 후 다시 시작해 주세요.', 'warn');
+    }
+
+    // 배치 API 응답이 오래 끊긴 경우를 알려준다(청크가 계속 안 들어오는 상태).
+    if(lastServerMsgAt && (Date.now()-lastServerMsgAt) > 15000 && !silentNoticeShown){
+      silentNoticeShown = true;
+      showNotice('15초 이상 응답이 없습니다. 소리가 마이크에 닿는지 확인하고, 계속되면 중지 후 다시 시작해 주세요.', 'warn');
+    }
+    if(lastServerMsgAt && (Date.now()-lastServerMsgAt) < 5000 && silentNoticeShown){
+      silentNoticeShown = false;   // 응답이 돌아오면 안내를 내린다
+      hideNotice();
+    }
+
+    // 2시간을 넘기면 세션을 나누도록 한 번 안내한다
+    if(s>=7200 && !longNoticeShown){
+      longNoticeShown=true;
+      showNotice('2시간이 지났습니다. 중지 후 새 세션으로 나누면 저장 실패와 성능 저하를 예방할 수 있습니다.', 'warn');
+    }
+  },1000);
+}
+function stopElapsed(){ clearInterval(elapsedInt); elapsedInt=null; }
+
+// 세션의 누적 소요시간(초). 진행 중이면 이번 구간까지 더해 계산한다.
+// currentSession.durationSec 자체는 건드리지 않아 중복 합산을 막는다.
+function getCurrentDurationSec(session){
+  let base = (session && session.durationSec) || 0;
+  if(session===currentSession && elapsedInt && startedAt){
+    base += Math.floor((Date.now()-startedAt)/1000);
+  }
+  return base;
+}
+
+// 초 → "1시간 12분" / "12분" 형태로 표시. 1분 미만은 표시하지 않는다(의미가 적음).
+function formatDuration(sec){
+  if(!sec || sec<60) return '';
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60);
+  return h>0 ? (h+'시간 '+m+'분') : (m+'분');
+}
+
+async function startTranslation(){
+  showErr('');
+  const key = document.getElementById('apiKey').value.trim();
+  if(!key){ showErr('API Key를 입력해주세요.'); return; }
+
+  const targetLang = document.getElementById('dstLang').value;
+  const sessionName = document.getElementById('sessionName').value.trim() || ('세션 '+dateStr());
+  updateLabels();
+
+  usageSessionId = 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+  sendUsageEvent('start', { app:'light', mode:'meeting', langPair: document.getElementById('srcLang').value+'→'+targetLang });
+
+  // 기존 데이터 있으면 이어서 여부 확인
+  const hasExisting = currentSession && (currentSession.src.length>0 || currentSession.dst.length>0);
+  let keepSession = false;
+  if(hasExisting){
+    keepSession = confirm('기존 세션 "'+currentSession.name+'"에 내용이 있습니다.\n\n확인: 이어서 기록\n취소: 새 세션으로 시작');
+  }
+
+  currentKey = key;
+  currentTargetLang = targetLang;
+  currentSessionName = keepSession ? currentSession.name : sessionName;
+  lastServerMsgAt = 0;
+  silentNoticeShown = false;
+  lastParseError = null; lastParseErrorAt = 0;
+  chunkBuf = []; chunkSamples = 0; silentSamples = 0; hasSpeechInChunk = false;
+  chunkQueue = []; chunkProcessing = false; lastContextText = ''; chunkSeq = 0;
+
+  // 문단번호 초기화 — 이어쓰기면 기존 최대값 다음부터 시작
+  if(keepSession && currentSession){
+    let mx=-1;
+    [...(currentSession.src||[]),...(currentSession.dst||[])].forEach(x=>{
+      const n=Number(x.seg); if(!isNaN(n)&&n>mx) mx=n;
+    });
+    segId = mx+1;
+  } else {
+    segId = 0;
+  }
+  segLang=''; segChars=0; dstSeg=segId; dstPrevEnded=true;
+  pendingCandidateLen=null; pendingSince=null;
+  pendingSilenceBreak=false; lastSrcEndedSentence=true;
+  refinedSegs.clear(); refineQueue=[]; refineBusy=false;
+  longNoticeShown=false;
+  hideNotice();
+  checkStorage();   // 시작 전에 저장 공간을 미리 확인
+  if(segSilenceT){clearTimeout(segSilenceT);segSilenceT=null;}
+
+  if(!keepSession){
+    currentSession = {
+      id: 's_'+Date.now(),
+      name: currentSessionName,
+      startTime: new Date().toISOString(),
+      startTimeStr: dateStr(),
+      lang: (document.getElementById('dstLang')?.value||'ko')+'|'+(document.getElementById('srcLang')?.value||'auto'),
+      src:[], dst:[], summary:'', durationSec:0
+    };
+    if(!hasExisting){
+      document.getElementById('srcBox').innerHTML='';
+      document.getElementById('dstBox').innerHTML='';
+    }
+    updateCurrentCard();
+    updateCtrlSession();
+  }
+
+  // 설정 패널 닫기
+  const panel = document.getElementById('settingsPanel');
+  if(panel && !panel.classList.contains('collapsed')){
+    panel.classList.add('collapsed');
+    document.getElementById('settingsToggle')?.classList.remove('open');
+  }
+
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({audio:{sampleRate:SR,channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});
+  } catch(err){ showErr('마이크 권한 필요: '+err.message); return; }
+
+  actx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:SR});
+  try{ if(actx.state==='suspended') await actx.resume(); }catch(_){}
+  document.getElementById('startBtn').disabled = true;
+
+  // 배치 방식은 지속 연결이 없으므로 "연결 중"을 기다릴 필요 없이 바로 녹음을 시작한다.
+  // 첫 조각이 완성되어 API 응답이 올 때까지는 몇 초의 지연이 있을 수 있다.
+  setStatus('recording', '녹음 중 — '+currentSessionName);
+  document.getElementById('stopBtn').disabled = false;
+  startMicProcessorBatch();
+  if(!elapsedInt){ startElapsed(); startAutoSave(); }
+  acquireWakeLock();
+}
+
+function cleanup(){
+  if(usageSessionId){ sendUsageEvent('stop'); usageSessionId = null; }
+  flushPendingChunk();   // 중지 시점까지 모아둔 오디오를 버리지 않고 마지막 조각으로 전송
+  if(proc){try{proc.disconnect();}catch(_){}proc=null;}
+  if(actx){try{actx.close();}catch(_){}actx=null;}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+  if(segSilenceT){clearTimeout(segSilenceT);segSilenceT=null;}
+  if(currentSession) currentSession.durationSec = getCurrentDurationSec(currentSession);
+  stopElapsed();
+  stopAutoSave();
+  releaseWakeLock();
+
+  // 내용이 있으면 자동 저장 — 저장 버튼을 잊어도 회의록이 남도록
+  if(currentSession && (currentSession.src.length||currentSession.dst.length)){
+    if(upsertSession(currentSession)){
+      renderSessionList();
+      setStatus('','대기 중 · 회의록 자동 저장됨');
+    } else {
+      setStatus('','대기 중');
+    }
+  } else {
+    setStatus('','대기 중');
+  }
+
+  document.getElementById('startBtn').disabled=false;
+  document.getElementById('stopBtn').disabled=true;
+  updateCurrentCard();
+}
+function stopTranslation(){
+  const hadContent = currentSession && (currentSession.src.length||currentSession.dst.length);
+  cleanup();
+  if(refineOn && !convMode && hadContent){
+    const sess = currentSession;
+    // 마지막 문단은 bumpSegment를 거치지 않아 큐에 없고,
+    // 중지 시점에 아직 처리되지 않은 문단도 남아 있을 수 있으므로 전부 챙긴다.
+    const n = refinePendingAll();
+    if(n > 0){
+      setStatus('','대기 중 · 남은 문단 '+n+'개 다듬는 중...');
+      const t0 = Date.now();
+      const waitDone = ()=>{
+        // 최대 2분까지만 기다린다 — 응답이 없어도 저장은 반드시 하고 끝낸다
+        if((refineBusy || refineQueue.length) && Date.now()-t0 < 120000){
+          setTimeout(waitDone, 400); return;
+        }
+        if(sess) upsertSession(sess);   // 다듬은 결과를 저장에 반영
+        renderSessionList();
+        setStatus('','대기 중 · 회의록 저장됨');
+      };
+      setTimeout(waitDone, 600);
+    }
+  }
+}
+
+// ══════════════════════════════════════
+// 회의록 탭
+// ══════════════════════════════════════
+function updateCurrentCard(){
+  const card=document.getElementById('currentCard');
+  const actions=document.getElementById('curActions');
+  const nameEl=document.getElementById('curName');
+  const metaEl=document.getElementById('curMeta');
+  if(!currentSession||(!currentSession.src.length&&!currentSession.dst.length)){
+    nameEl.textContent='세션 없음';
+    metaEl.textContent='번역 탭에서 세션명을 입력하고 시작하세요';
+    actions.style.display='none';
+  } else {
+    nameEl.textContent=currentSession.name;
+    metaEl.textContent=currentSession.startTimeStr+' · '+langPairLabel(currentSession.lang)+' · '+currentSession.dst.length+'개 문단';
+    actions.style.display='flex';
+  }
+}
+
+function refreshMinutesTab(){
+  updateCurrentCard();
+  renderSessionList();
+  updateStorageLabel();
+}
+
+// ── localStorage 세션 관리 ──
+function getSessions(){
+  try{return JSON.parse(localStorage.getItem('gtl_sessions')||'[]');}catch(_){return[];}
+}
+function setSessions(arr){
+  localStorage.setItem('gtl_sessions',JSON.stringify(arr));
+}
+
+function escapeHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// 원문·번역을 문단번호로 짝지어 묶는다.
+// seg가 없는 예전 세션은 순번으로 대응시켜 하위 호환을 지킨다.
+function pairSegments(session){
+  const src=session.src||[], dst=session.dst||[];
+  const hasSeg = src.some(x=>x.seg!=null) || dst.some(x=>x.seg!=null);
+
+  if(!hasSeg){
+    const n=Math.max(src.length,dst.length), out=[];
+    for(let i=0;i<n;i++) out.push({key:String(i), src:src[i]?[src[i]]:[], dst:dst[i]?[dst[i]]:[]});
+    return out;
+  }
+  const map=new Map();
+  const add=(item,which)=>{
+    const k=String(item.seg!=null?item.seg:'_');
+    if(!map.has(k)) map.set(k,{key:k,src:[],dst:[]});
+    map.get(k)[which].push(item);
+  };
+  src.forEach(x=>add(x,'src'));
+  dst.forEach(x=>add(x,'dst'));
+  return [...map.values()].sort((a,b)=>(Number(a.key)||0)-(Number(b.key)||0));
+}
+
+function segMeta(sg){
+  const first = sg.src[0] || sg.dst[0] || {};
+  const langItem = sg.src.find(x=>x.lang) || {};
+  return { time: first.time||'', lang: langItem.lang||'' };
+}
+
+// 세션을 id 기준으로 저장/갱신 (중복 누적 방지)
+function upsertSession(session){
+  if(!session || (!session.src.length && !session.dst.length)) return false;
+  if(!session.id) session.id='s_'+Date.now();
+  try{
+    const arr=getSessions();
+    const i=arr.findIndex(s=>s.id===session.id);
+    const copy=JSON.parse(JSON.stringify(session));
+    if(i>=0) arr[i]=copy; else arr.unshift(copy);
+    setSessions(arr);
+    return true;
+  }catch(err){
+    const cap = learnQuota();   // 실패 지점을 실측 한도로 학습
+    updateStorageLabel();
+    showErr('저장 공간 부족 — 저장 실패');
+    const capTxt = cap ? (' (실측 한도 약 '+(Math.round(cap/1024/1024*10)/10)+'MB)') : '';
+    // 데이터가 메모리에만 있는 상태다. 경고만 하지 말고 바로 내려받게 한다.
+    showNotice('저장 공간이 가득 차 저장하지 못했습니다'+capTxt+'. 기록이 사라지기 전에 파일로 내려받고 오래된 회의록을 삭제해 주세요.',
+      'danger', { label:'지금 다운로드', fn:()=>{ try{ downloadSession(session); }catch(_){} } });
+    return false;
+  }
+}
+
+function saveCurrentSession(){
+  if(!currentSession||(!currentSession.src.length&&!currentSession.dst.length)){alert('저장할 내용이 없습니다.');return;}
+  const ok=upsertSession(currentSession);   // 같은 세션이면 갱신, 새 세션이면 추가
+  renderSessionList();
+  const btn=document.querySelector('.btn-save');
+  if(btn){
+    btn.textContent = ok ? '✅ 저장됨' : '⚠️ 실패';
+    setTimeout(()=>{btn.textContent='💾 저장';},1500);
+  }
+}
+
+// ── 회의록 다중 선택 삭제 ──
+let selectMode = false;
+const selectedIds = new Set();
+
+function toggleSelectMode(){
+  selectMode = !selectMode;
+  selectedIds.clear();
+  const btn = document.getElementById('selectToggleBtn');
+  const bar = document.getElementById('bulkActionBar');
+  btn.textContent = selectMode ? '완료' : '선택';
+  btn.classList.toggle('on', selectMode);
+  bar.classList.toggle('hidden', !selectMode);
+  const allBox = document.getElementById('selectAllBox');
+  if(allBox) allBox.checked = false;
+  renderSessionList();
+}
+
+function toggleSessionSelect(id, checked){
+  if(checked) selectedIds.add(id); else selectedIds.delete(id);
+  updateBulkDelButton();
+}
+
+function toggleSelectAll(checked){
+  const sessions = getSessions();
+  selectedIds.clear();
+  if(checked) sessions.forEach(s=>selectedIds.add(s.id));
+  renderSessionList();
+}
+
+function updateBulkDelButton(){
+  const btn = document.getElementById('bulkDelBtn');
+  if(!btn) return;
+  btn.textContent = '선택 삭제 ('+selectedIds.size+')';
+  btn.disabled = selectedIds.size===0;
+  const sessions = getSessions();
+  const allBox = document.getElementById('selectAllBox');
+  if(allBox) allBox.checked = sessions.length>0 && selectedIds.size===sessions.length;
+}
+
+function bulkDeleteSelected(){
+  if(!selectedIds.size) return;
+  if(!confirm(selectedIds.size+'개 회의록을 삭제하시겠습니까?')) return;
+  setSessions(getSessions().filter(s=>!selectedIds.has(s.id)));
+  selectedIds.clear();
+  renderSessionList();
+  updateStorageLabel();
+  if(storagePct()<70) hideNotice();
+}
+
+function renderSessionList(){
+  const sessions=getSessions();
+  const container=document.getElementById('sessionList');
+  if(!sessions.length){container.innerHTML='<div class="empty-msg">저장된 세션이 없습니다</div>';updateBulkDelButton();return;}
+  container.innerHTML=sessions.map(s=>{
+    const[dst,src]=s.lang.split('|');
+    const meta = `${s.startTimeStr}${formatDuration(s.durationSec)?' · '+formatDuration(s.durationSec):''} · ${langPairLabel(s.lang)} · ${s.dst.length}개 문단`;
+    if(selectMode){
+      const checked = selectedIds.has(s.id) ? 'checked' : '';
+      return `<div class="session-item selectable" onclick="const cb=this.querySelector('.session-checkbox'); cb.checked=!cb.checked; toggleSessionSelect('${s.id}', cb.checked);">
+        <input type="checkbox" class="session-checkbox" ${checked} onclick="event.stopPropagation(); toggleSessionSelect('${s.id}', this.checked);">
+        <div class="session-info">
+          <div class="sname">${s.name}</div>
+          <div class="smeta">${meta}</div>
+        </div>
+      </div>`;
+    }
+    return `<div class="session-item" onclick="openModal('${s.id}')">
+      <div class="session-info">
+        <div class="sname">${s.name}</div>
+        <div class="smeta">${meta}</div>
+      </div>
+      <button class="session-del" onclick="deleteSession(event,'${s.id}')">삭제</button>
+    </div>`;
+  }).join('');
+  updateBulkDelButton();
+}
+
+function deleteSession(e,id){
+  e.stopPropagation();
+  if(!confirm('삭제하시겠습니까?'))return;
+  setSessions(getSessions().filter(s=>s.id!==id));
+  renderSessionList();
+  updateStorageLabel();
+  if(storagePct()<70) hideNotice();
+}
+
+// ── 세션 텍스트 빌드 ──
+// 요약문 안의 제목을 한 단계 낮춘다 — 'AI 요약' 아래로 자연스럽게 들어가도록
+function demoteHeadings(md){
+  return String(md).replace(/^(#{1,5})\s+/gm, (m,h)=>'#'.repeat(h.length+1)+' ');
+}
+
+function buildFullText(session, opts){
+  const includeSummary = !opts || opts.summary !== false;
+  let txt='# '+session.name+'\n\n';
+  txt+='- 일시: '+session.startTimeStr+'\n';
+  if(formatDuration(session.durationSec)) txt+='- 소요시간: '+formatDuration(session.durationSec)+'\n';
+  txt+='- 언어: '+langPairLabel(session.lang)+'\n\n';
+  txt+='---\n\n';
+
+  // AI 요약이 있으면 맨 앞에 넣는다 — 문서를 열자마자 결론부터 보이게
+  const summMap = summariesOf(session);
+  const summLangs = Object.keys(summMap);
+  if(includeSummary && summLangs.length){
+    summLangs.forEach(lang=>{
+      const t = summMap[lang];
+      if(t && t.trim()){
+        txt+='## AI 요약 ('+(langName[lang]||lang)+')\n\n'+demoteHeadings(t.trim())+'\n\n';
+      }
+    });
+    txt+='---\n\n';
+  }
+
+  txt+='## 전문 (원문 · 번역)\n\n';
+  const segs=pairSegments(session);
+  segs.forEach((sg,n)=>{
+    const m=segMeta(sg);
+    txt+='### 문단 '+(n+1);
+    if(m.time) txt+=' · '+m.time;
+    if(scriptTag[m.lang]) txt+=' · '+scriptTag[m.lang];
+    txt+='\n\n';
+    if(sg.src.length) txt+='**원문**\n\n'+sg.src.map(x=>x.text).join(' ')+'\n\n';
+    if(sg.dst.length) txt+='**번역**\n\n'+sg.dst.map(x=>x.text).join(' ')+'\n\n';
+  });
+  return txt;
+}
+
+// ── 다운로드 ──
+// 파일명에 마침표를 쓰지 않는다 — 여러 개 있으면 iOS가 확장자를 잘못 인식한다
+function safeFileName(session){
+  const base=(session.name||'session')
+    .replace(/[^0-9A-Za-z\uAC00-\uD7A3\u3131-\u318E _-]+/g,'')
+    .replace(/\s+/g,'_')
+    .replace(/_+/g,'_')
+    .replace(/^[_-]+|[_-]+$/g,'')
+    .slice(0,60) || 'session';
+  const d = session.startTime ? new Date(session.startTime) : new Date();
+  const z = n => String(n).padStart(2,'0');
+  const stamp = d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+'-'+z(d.getHours())+z(d.getMinutes());
+  return base+'_'+stamp+'.md';
+}
+
+function downloadSession(session){
+  const txt=buildFullText(session);
+  const blob=new Blob([txt],{type:'text/markdown;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=safeFileName(session);
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+
+function downloadCurrent(){
+  if(!currentSession){alert('세션이 없습니다.');return;}
+  downloadSession(currentSession);
+}
+function downloadModal(){
+  if(!modalSession)return;
+  downloadSession(modalSession);
+}
+
+// 마크다운 → Plain Text 변환 후 복사
+async function copySummary(areaId, btnId){
+  const area=document.getElementById(areaId);
+  if(!area){return;}
+  const boxes=area.querySelectorAll('.summary-box');
+  if(!boxes.length){alert('요약 내용이 없습니다.');return;}
+  let raw='';
+  boxes.forEach((box,i)=>{
+    let one=box.innerHTML.replace(/<br\s*\/?>/gi,'\n').replace(/<[^>]+>/g,'');
+    const ta0=document.createElement('textarea');
+    ta0.innerHTML=one; one=ta0.value;
+    raw += (i>0?'\n\n':'') + one;
+  });
+  // HTML 엔티티 디코딩
+  const ta=document.createElement('textarea');
+  ta.innerHTML=raw; raw=ta.value;
+  // 마크다운 기호 제거
+  let plain=raw
+    .replace(/^#{1,6}\s*/gm,'')          // ## 헤더
+    .replace(/\*\*(.*?)\*\*/g,'$1')       // **bold**
+    .replace(/\*(.*?)\*/g,'$1')           // *italic*
+    .replace(/^[\*\-]\s+/gm,'• ')         // - 목록 → •
+    .replace(/^\d+\.\s+/gm,(m)=>m)       // 숫자 목록 유지
+    .replace(/`{1,3}(.*?)`{1,3}/g,'$1')  // `코드`
+    .trim();
+  try{await navigator.clipboard.writeText(plain);}
+  catch(_){
+    const t=document.createElement('textarea');
+    t.value=plain;t.style.cssText='position:fixed;opacity:0';
+    document.body.appendChild(t);t.select();document.execCommand('copy');document.body.removeChild(t);
+  }
+  const btn=document.getElementById(btnId);
+  const orig=btn.textContent;
+  btn.textContent='✅ 복사됨'; btn.classList.add('copied');
+  setTimeout(()=>{btn.textContent=orig;btn.classList.remove('copied');},1500);
+}
+
+// ── AI 요약 ──
+function summariesOf(session){
+  if(session.summaries) return session.summaries;
+  return session.summary ? { ko: session.summary } : {};
+}
+function renderSummaries(session, areaId){
+  const area=document.getElementById(areaId);
+  if(!area) return;
+  const map = summariesOf(session);
+  const langs = Object.keys(map);
+  if(!langs.length){ area.innerHTML=''; return; }
+  area.innerHTML = langs.map(lang => {
+    const name = langName[lang] || lang;
+    const text = map[lang];
+    return '<div style="font-size:11px;color:#555;margin:12px 0 4px;">'+name+' 요약</div>'
+         + '<div class="summary-box">'+text.replace(/</g,'&lt;').replace(/\n/g,'<br>')+'</div>';
+  }).join('');
+}
+
+async function summarizeSession(session, areaId, btnId, langSelId){
+  const key=document.getElementById('apiKey').value.trim();
+  if(!key){alert('API Key를 번역 탭에 입력해주세요.');return;}
+  const btn=document.getElementById(btnId);
+  btn.disabled=true; btn.textContent='요약 중...';
+  const area=document.getElementById(areaId);
+  if(!Object.keys(summariesOf(session)).length) area.innerHTML='<div class="summary-loading">Gemini가 요약 중입니다...</div>';
+  else area.innerHTML += '<div class="summary-loading">Gemini가 요약 중입니다...</div>';
+
+  const sumLang = document.getElementById(langSelId)?.value || 'ko';
+  const sumLangName = langName[sumLang] || '한국어';
+  const fullText=buildFullText(session, {summary:false});   // 요약 만들 때는 기존 요약 제외
+  const prompt=`다음은 실시간 번역된 회의 내용입니다. 아래 항목으로 ${sumLangName} 회의록을 작성해주세요. 항목 제목을 포함해 전체를 ${sumLangName}로 작성하세요.
+
+## 📌 핵심 요약 (3~5줄)
+## ✅ Action Items
+## 💡 주요 논의 사항
+## ⚠️ 리스크 / 주의사항 (있는 경우만)
+
+회의 내용:
+${fullText.slice(0,8000)}`;
+
+  try{
+    const gRes=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
+    });
+    if(!gRes.ok){const errData=await gRes.json();throw new Error(errData.error?.message||'API 오류 '+gRes.status);}
+    const gData=await gRes.json();
+    const summary=gData.candidates?.[0]?.content?.parts?.[0]?.text||'요약 실패';
+    if(!session.summaries) session.summaries = summariesOf(session);
+    session.summaries[sumLang] = summary;
+    session.summary = summary;
+    renderSummaries(session, areaId);
+    if(session===currentSession){
+      const copyRow=document.getElementById('summaryCopyRow');
+      if(copyRow) copyRow.style.display='block';
+    }
+    btn.textContent='재요약';
+  }catch(err){
+    area.innerHTML='<div class="summary-box" style="color:#ff453a">오류: '+err.message+'</div>';
+    btn.textContent='AI 요약 생성';
+  }
+  btn.disabled=false;
+}
+
+function summarizeCurrent(){summarizeSession(currentSession,'summaryArea','summarizeBtn','summaryLang');}
+
+// ── 모달 ──
+let editMode = false;
+
+function openModal(id){
+  const session=getSessions().find(s=>s.id===id);
+  if(!session)return;
+  modalSession=session;
+  editMode = false;
+  document.getElementById('modalOverlay').classList.remove('hidden');
+  document.getElementById('editSaveBar').classList.remove('show');
+  document.getElementById('modalEditBtn').classList.remove('active');
+  document.getElementById('modalEditBtn').textContent='✏️ 수정';
+  renderModalBody();
+  requestAnimationFrame(()=>{
+    requestAnimationFrame(()=>fixModalBodyHeight());
+  });
+}
+
+function fixModalBodyHeight(){
+  const overlay=document.getElementById('modalOverlay');
+  const body=document.getElementById('modalBody');
+  const header=overlay.querySelector('.modal-header');
+  const actions=overlay.querySelector('.modal-actions');
+  const saveBar=document.getElementById('editSaveBar');
+  const hh=header?header.getBoundingClientRect().height:0;
+  const ah=actions?actions.getBoundingClientRect().height:0;
+  const sh=(saveBar&&saveBar.classList.contains('show'))?saveBar.getBoundingClientRect().height:0;
+  const available=window.innerHeight-hh-ah-sh;
+  body.style.cssText='height:'+available+'px;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:1rem;box-sizing:border-box;';
+}
+
+function renderModalBody(){
+  const session=modalSession;
+
+  document.getElementById('modalTitle').textContent=session.name;
+  document.getElementById('modalTitle').classList.remove('hidden');
+  document.getElementById('modalTitleInput').classList.add('hidden');
+  document.getElementById('modalTitleInput').value=session.name;
+
+  const body=document.getElementById('modalBody');
+  body.className = editMode ? 'edit-mode' : '';
+  body.innerHTML='<div style="font-size:12px;color:#555;margin-bottom:12px;">'+session.startTimeStr+(formatDuration(session.durationSec)?' · '+formatDuration(session.durationSec):'')+' · '+langPairLabel(session.lang)+'</div>';
+
+  // 문단 단위로 원문·번역을 한 덩어리(카드)로 묶어 보여준다
+  const segs=pairSegments(session);
+  let html='';
+  segs.forEach((sg,n)=>{
+    const m=segMeta(sg);
+    html+='<div class="seg-card">';
+    html+='<div class="seg-head"><span class="seg-no">문단 '+(n+1)+'</span>'
+        + (m.time?'<span class="seg-time">'+escapeHtml(m.time)+'</span>':'')
+        + (scriptTag[m.lang]?'<span class="lang-tag">'+scriptTag[m.lang]+'</span>':'')
+        + '</div>';
+    if(sg.src.length){
+      html+='<div class="seg-part"><div class="seg-label">원문</div>';
+      sg.src.forEach(it=>{ html+=renderPara('src', session.src.indexOf(it), it, ''); });
+      html+='</div>';
+    }
+    if(sg.dst.length){
+      html+='<div class="seg-part"><div class="seg-label">번역</div>';
+      sg.dst.forEach(it=>{ html+=renderPara('dst', session.dst.indexOf(it), it, 'ko'); });
+      html+='</div>';
+    }
+    html+='</div>';
+  });
+  body.innerHTML+=html;
+
+  // 기존 요약 있으면 표시
+  if(Object.keys(summariesOf(session)).length){
+    body.innerHTML+='<div style="font-size:11px;color:#555;margin-top:16px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;"><span>AI 요약</span><button class="copy-btn" id="copyModalSumBtn2" onclick="copySummary(\'modalSummaryArea\',\'copyModalSumBtn2\')">복사</button></div>';
+    body.innerHTML+='<div id="modalSummaryArea"></div>';
+    renderSummaries(session, 'modalSummaryArea');
+  } else {
+    body.innerHTML+='<div id="modalSummaryArea"></div>';
+  }
+}
+
+function renderPara(type, idx, item, cls){
+  const editable = editMode ? 'true' : 'false';
+  const rtag = item.refined ? '<span class="refine-tag">다듬음</span>' : '';
+  return '<div class="para'+(cls?' '+cls:'')+'" data-type="'+type+'" data-idx="'+idx+'"'
+    +' data-seg="'+(item.seg!=null?escapeHtml(item.seg):'')+'"'
+    +' data-lang="'+escapeHtml(item.lang||'')+'">'
+    +'<span class="ts">'+escapeHtml(item.time||'')+'</span>'+rtag
+    +'<button class="para-del" onclick="deletePara(this)">삭제</button>'
+    +'<span class="pt" contenteditable="'+editable+'">'+escapeHtml(item.text)+'</span>'
+    +'</div>';
+}
+
+function toggleEditMode(){
+  if(!modalSession)return;
+  editMode = !editMode;
+  renderModalBody();
+  const btn=document.getElementById('modalEditBtn');
+  const titleSpan=document.getElementById('modalTitle');
+  const titleInput=document.getElementById('modalTitleInput');
+  const saveBar=document.getElementById('editSaveBar');
+  if(editMode){
+    btn.textContent='편집 중'; btn.classList.add('active');
+    titleSpan.classList.add('hidden');
+    titleInput.classList.remove('hidden');
+    titleInput.value=modalSession.name;
+    saveBar.classList.add('show');
+  } else {
+    btn.textContent='✏️ 수정'; btn.classList.remove('active');
+    saveBar.classList.remove('show');
+  }
+}
+
+function deletePara(btnEl){
+  if(!confirm('이 문단을 삭제하시겠습니까?'))return;
+  const paraEl = btnEl.closest('.para');
+  paraEl.remove();
+}
+
+function saveEdit(){
+  if(!modalSession)return;
+  const session = modalSession;
+  const titleInput = document.getElementById('modalTitleInput');
+  const newName = titleInput.value.trim();
+  if(newName) session.name = newName;
+
+  // 본문에 남아있는 .para들을 다시 src/dst 배열로 재구성
+  const body = document.getElementById('modalBody');
+  const newSrc = [], newDst = [];
+  body.querySelectorAll('.para').forEach(p=>{
+    const type = p.dataset.type;
+    const time = p.querySelector('.ts').textContent;
+    const text = p.querySelector('.pt').textContent.trim();
+    if(!text) return;
+    const item = {time, text};
+    if(p.dataset.seg!=='') item.seg = p.dataset.seg;   // 문단 대응 유지
+    if(p.dataset.lang)     item.lang = p.dataset.lang;
+    if(p.querySelector('.refine-tag')) item.refined = true;
+    if(type==='src') newSrc.push(item);
+    else newDst.push(item);
+  });
+  session.src = newSrc;
+  session.dst = newDst;
+
+  // localStorage 갱신
+  const sessions = getSessions();
+  const idx = sessions.findIndex(s=>s.id===session.id);
+  if(idx>=0){ sessions[idx]=session; setSessions(sessions); }
+
+  editMode=false;
+  document.getElementById('editSaveBar').classList.remove('show');
+  document.getElementById('modalEditBtn').textContent='✏️ 수정';
+  document.getElementById('modalEditBtn').classList.remove('active');
+  renderModalBody();
+  renderSessionList();
+
+  const btn=document.getElementById('modalEditBtn');
+  btn.textContent='✅ 저장됨';
+  setTimeout(()=>{btn.textContent='✏️ 수정';},1200);
+}
+
+function cancelEdit(){
+  editMode=false;
+  document.getElementById('editSaveBar').classList.remove('show');
+  document.getElementById('modalEditBtn').textContent='✏️ 수정';
+  document.getElementById('modalEditBtn').classList.remove('active');
+  renderModalBody();
+}
+
+function summarizeModal(){
+  if(!modalSession)return;
+  summarizeSession(modalSession,'modalSummaryArea','modalSumBtn','summaryLangModal');
+}
+
+function closeModal(){
+  document.getElementById('modalOverlay').classList.add('hidden');
+  modalSession=null;
+  editMode=false;
+}
+function closeModalOutside(e){if(e.target===document.getElementById('modalOverlay'))closeModal();}
+</script>
+</body>
+</html>
