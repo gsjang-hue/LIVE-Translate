@@ -1,4 +1,5 @@
-﻿<!DOCTYPE html>
+
+<!DOCTYPE html>
 <!--
   LIVE translate
   v5.3  2026.08.01  회의록 목록에 다중 선택 삭제 기능 추가("선택" 버튼 →
@@ -216,13 +217,24 @@
   .voice-toggle.on { color: #30d158; border-color: #30d15844; background: #30d15811; }
   .refine-btn { font-size:12px; padding:4px 9px; border-radius:7px; border:0.5px solid #444; background:transparent; color:#888; cursor:pointer; flex-shrink:0; white-space:nowrap; }
   .refine-btn.on { color:#f0c674; border-color:#f0c67455; background:#f0c67411; }
+  /* 발언 추천 패널 */
+  .suggest-panel { background:#1a1508; border-bottom:0.5px solid #4a3f1a; flex-shrink:0; max-height:38vh; overflow-y:auto; }
+  .suggest-panel.hidden { display:none; }
+  .suggest-header { display:flex; align-items:center; justify-content:space-between; padding:8px 1rem; font-size:12px; color:#f0c674; font-weight:600; position:sticky; top:0; background:#1a1508; }
+  .suggest-body { padding:0 1rem 12px; font-size:13.5px; line-height:1.55; }
+  .suggest-body .sg-lang { font-size:10px; color:#8a7a4a; margin:8px 0 3px; }
+  .suggest-body .sg-text { color:#f0e0b0; background:#00000022; border-radius:8px; padding:8px 10px; }
+  .suggest-loading { color:#8a7a4a; font-size:13px; padding:4px 0; }
+  .sg-entry { padding:4px 0; }
+  .sg-time { font-size:10px; color:#6a5a2a; margin-bottom:4px; }
+  .sg-divider { border:none; border-top:0.5px solid #3a3010; margin:14px 0; }
   .manual-link { font-size:12px; padding:4px 9px; border-radius:7px; border:0.5px solid #444; background:transparent; color:#888; cursor:pointer; flex-shrink:0; white-space:nowrap; text-decoration:none; display:inline-flex; align-items:center; align-self:flex-end; }
   .manual-link:hover, .manual-link:active { color:#30d158; border-color:#30d15855; background:#30d15811; }
   .refine-tag { display:inline-block; font-size:9px; color:#f0c674; border:0.5px solid #f0c67455; border-radius:3px; padding:0 4px; margin-right:6px; vertical-align:1px; letter-spacing:0.04em; }
   .refining { opacity:0.75; }
 
   /* ── 접히는 설정 패널 ── */
-  .settings { padding: 0.5rem 0.8rem; border-bottom: 0.5px solid #2a2a2a; display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; flex-shrink: 0; background: #131313; overflow: hidden; transition: max-height 0.2s ease, padding 0.2s ease; max-height: 200px; }
+  .settings { padding: 0.5rem 0.8rem; border-bottom: 0.5px solid #2a2a2a; display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; flex-shrink: 0; background: #131313; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; transition: max-height 0.2s ease, padding 0.2s ease; max-height: 70vh; }
   .settings.collapsed { max-height: 0; padding-top: 0; padding-bottom: 0; border-bottom: none; }
   .sg { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
   .sg label { font-size: 10px; color: #555; }
@@ -349,6 +361,10 @@
 
   @media (max-width: 599px) {
     .settings { flex-direction: column; }
+    .ctrl-scroll { flex-wrap: wrap; overflow-x: visible; }
+    .ctrl-session { display: none; }
+    .settings .sg { width: 100%; }
+    .settings select { max-width: 100%; width: 100%; }
     input[type="password"] { width: 100%; }
     .session-input { width: 100%; }
     .btns { margin-left: 0; width: 100%; }
@@ -379,6 +395,7 @@
       <button id="stopBtn" onclick="stopTranslation()" disabled>중지</button>
       <button id="clearBtn" onclick="clearAll()">지우기</button>
       <button class="refine-btn on" id="refineBtn" onclick="toggleRefine()" title="문단이 끝나면 번역을 다시 다듬습니다">✨ 다듬기</button>
+      <button class="refine-btn" id="suggestBtn" onclick="suggestReply()" title="지금까지 맥락을 보고 다음 발언을 추천합니다">💡 발언 추천</button>
       <span class="ctrl-session" id="ctrlSession">—</span>
     </div>
     <button class="ctrl-toggle" id="settingsToggle" onclick="toggleSettings()" title="설정">⚙️</button>
@@ -397,6 +414,14 @@
     <div class="sg" id="sgSession">
       <label>세션명</label>
       <input type="text" class="session-input" id="sessionName" placeholder="예: Blackstone 미팅" />
+    </div>
+    <div class="sg" id="sgProfile">
+      <label>💡 발언 추천용 — 내 프로필 (한 번만 써두면 계속 재사용됩니다)</label>
+      <textarea id="myProfile" rows="2" placeholder="예: 대형 증권사 PI부문 대체투자 담당자. 직설적이고 논리적인 화법 선호." style="width:100%; background:#1c1c1e; color:#eee; border:0.5px solid #333; border-radius:8px; padding:8px; font-size:13px; resize:vertical;"></textarea>
+    </div>
+    <div class="sg" id="sgMeetingInfo">
+      <label>💡 발언 추천용 — 이번 회의 정보 · 내 입장 (회의마다 갱신)</label>
+      <textarea id="meetingInfo" rows="2" placeholder="예: A사와 investment term 협상 중. 우리는 밸류에이션 인하를 원함." style="width:100%; background:#1c1c1e; color:#eee; border:0.5px solid #333; border-radius:8px; padding:8px; font-size:13px; resize:vertical;"></textarea>
     </div>
     <!-- 회의 모드 설정 -->
     <div class="sg" id="sgMeetingLang">
@@ -422,10 +447,10 @@
         <option value="fr">프랑스어</option>
       </select>
     </div>
-    <a class="manual-link" href="gemini_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
+    <a class="manual-link" href="live_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/translate.html" title="음성 출력·대화 모드가 있는 기본 버전으로 이동">🔵 기본 버전</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/" title="버전을 비교하고 선택하는 첫 화면으로 이동">🏠 홈</a>
-    <div class="version-tag">Light v1.2 · 2026.08.01<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
+    <div class="version-tag">Light v1.3 · 2026.08.08<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
   </div>
 
   <!-- 공용 안내 배너 (저장 공간·긴 세션 경고) -->
@@ -433,6 +458,15 @@
     <span class="notice-text"></span>
     <button class="notice-action hidden" id="noticeAction" onclick="runNoticeAction()">실행</button>
     <button class="notice-close" onclick="hideNotice()">✕</button>
+  </div>
+
+  <!-- 발언 추천 패널 -->
+  <div class="suggest-panel hidden" id="suggestPanel">
+    <div class="suggest-header">
+      <span>💡 추천 발언</span>
+      <button class="notice-close" onclick="closeSuggestPanel()">✕</button>
+    </div>
+    <div class="suggest-body" id="suggestBody"></div>
   </div>
 
   <div class="statusbar">
@@ -1109,6 +1143,8 @@ function saveSettings(){
   const dl = document.getElementById('dstLang')?.value;
   if(sl) localStorage.setItem('gtl_srcLang', sl);
   if(dl) localStorage.setItem('gtl_dstLang', dl);
+  const pf=document.getElementById('myProfile'); if(pf) localStorage.setItem('gtl_myProfile', pf.value||'');
+  const mi=document.getElementById('meetingInfo'); if(mi) localStorage.setItem('gtl_meetingInfo', mi.value||'');
 }
 
 function loadSettings(){
@@ -1120,6 +1156,8 @@ function loadSettings(){
   };
   setSel('srcLang', localStorage.getItem('gtl_srcLang'));
   setSel('dstLang', localStorage.getItem('gtl_dstLang'));
+  const pf=document.getElementById('myProfile'); if(pf) pf.value = localStorage.getItem('gtl_myProfile')||'';
+  const mi=document.getElementById('meetingInfo'); if(mi) mi.value = localStorage.getItem('gtl_meetingInfo')||'';
   const fs = parseInt(localStorage.getItem('gtl_fontsize')||'15',10);
   if(fs>=11 && fs<=26) applyFont(fs);
   const rv = localStorage.getItem('gtl_refine');
@@ -1141,6 +1179,103 @@ function clearApiKey(){
   document.getElementById('apiKey').value='';
   showKeySaved(false);
 }
+
+// ── 발언 추천 (기본 버전과 동일 로직 이식) ──
+let meetingRollingSummary = '';   // 매번 전체를 다시 보내지 않기 위한 누적 요약
+let suggestSegCount = 0;          // 롤링 요약에 반영된 문단 수
+let suggestHistory = [];          // 이번 세션 추천 발언 전부
+
+function closeSuggestPanel(){ document.getElementById('suggestPanel')?.classList.add('hidden'); }
+
+function renderSuggestHistory(){
+  const body = document.getElementById('suggestBody');
+  if(!body) return;
+  if(!suggestHistory.length){ body.innerHTML=''; return; }
+  body.innerHTML = suggestHistory.slice().reverse().map((item, idx)=>{
+    const latestTag = idx===0 ? ' · 최신' : '';
+    return '<div class="sg-entry">'
+      + '<div class="sg-time">'+item.time+latestTag+'</div>'
+      + '<div class="sg-lang">🇰🇷 한국어</div><div class="sg-text">'+(item.ko||'').replace(/</g,'&lt;')+'</div>'
+      + '<div class="sg-lang">🇺🇸 영어</div><div class="sg-text">'+(item.en||'').replace(/</g,'&lt;')+'</div>'
+      + '</div>';
+  }).join('<hr class="sg-divider">');
+}
+
+function buildTranscriptDelta(session, fromSegCount){
+  const segs = pairSegments(session);
+  const newSegs = segs.slice(fromSegCount);
+  if(!newSegs.length) return { text:'', segCount: segs.length };
+  let text='';
+  newSegs.forEach(sg=>{
+    const srcTxt=(sg.src||[]).map(x=>x.text).join(' ').trim();
+    const dstTxt=(sg.dst||[]).map(x=>x.text).join(' ').trim();
+    if(srcTxt) text += '- 원문: '+srcTxt+'\n';
+    if(dstTxt) text += '  번역: '+dstTxt+'\n';
+  });
+  return { text, segCount: segs.length };
+}
+
+async function suggestReply(){
+  const key=document.getElementById('apiKey').value.trim();
+  if(!key){ showErr('API Key를 입력해주세요.'); return; }
+  if(!currentSession || (!currentSession.src.length && !currentSession.dst.length)){
+    showErr('아직 회의 내용이 없습니다.'); return;
+  }
+  const btn=document.getElementById('suggestBtn');
+  const panel=document.getElementById('suggestPanel');
+  const body=document.getElementById('suggestBody');
+  btn.disabled=true;
+  panel.classList.remove('hidden');
+  renderSuggestHistory();
+  body.insertAdjacentHTML('afterbegin', '<div class="suggest-loading" id="suggestLoadingRow">맥락을 살펴보는 중...</div>');
+
+  const profile=document.getElementById('myProfile')?.value.trim() || '(제공되지 않음)';
+  const meetingInfo=document.getElementById('meetingInfo')?.value.trim() || '(제공되지 않음)';
+  const { text: deltaText, segCount } = buildTranscriptDelta(currentSession, suggestSegCount);
+  const prevSummary = meetingRollingSummary || '(아직 없음 — 이번이 첫 요청)';
+
+  const prompt = '당신은 실시간 통역 회의에 참석 중인 사용자를 돕는 어시스턴트입니다.\n\n'
+    + '[내 프로필]\n'+profile+'\n\n'
+    + '[이번 회의 정보 및 내 입장]\n'+meetingInfo+'\n\n'
+    + '[지금까지 회의 요약(이전)]\n'+prevSummary+'\n\n'
+    + '[그 이후 새로 오간 대화]\n'+(deltaText || '(새 내용 없음)')+'\n\n'
+    + '요청:\n'
+    + '1. updated_summary: "이전 요약"과 "새로 오간 대화"를 종합해, 회의 전체 흐름을 압축한 최신 요약을 작성하세요. 다음 번엔 이 요약만 참고하면 되도록 핵심 논점과 합의/이견 위주로 작성하세요.\n'
+    + '2. suggestion_ko: 지금 이 시점에서 내 프로필과 이번 회의 입장에 맞게, 사용자가 다음에 할 만한 발언을 자연스러운 한국어로 하나 제안하세요.\n'
+    + '3. suggestion_en: 같은 제안을 자연스러운 영어로도 작성하세요.\n\n'
+    + 'JSON 스키마에 맞춰서만 답하세요.';
+
+  try{
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+key, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        contents: [{ role:'user', parts:[{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: { type:'OBJECT', properties:{
+            updated_summary:{type:'STRING'}, suggestion_ko:{type:'STRING'}, suggestion_en:{type:'STRING'} },
+            required:['updated_summary','suggestion_ko','suggestion_en'] },
+        },
+      }),
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if(!text) throw new Error('응답 없음');
+    const result = JSON.parse(text);
+    meetingRollingSummary = result.updated_summary || meetingRollingSummary;
+    suggestSegCount = segCount;
+    suggestHistory.push({ time:new Date().toTimeString().slice(0,5), ko:result.suggestion_ko||'', en:result.suggestion_en||'' });
+    renderSuggestHistory();
+  }catch(err){
+    document.getElementById('suggestLoadingRow')?.remove();
+    body.insertAdjacentHTML('afterbegin', '<div class="suggest-loading">추천 실패: '+(err?.message||err)+'</div>');
+  }
+  btn.disabled=false;
+}
+
+document.getElementById('myProfile')?.addEventListener('change', saveSettings);
+document.getElementById('meetingInfo')?.addEventListener('change', saveSettings);
 
 // 입력 시 자동 저장
 document.getElementById('apiKey').addEventListener('change', ()=>{
@@ -1533,6 +1668,7 @@ async function startTranslation(){
   pendingCandidateLen=null; pendingSince=null;
   pendingSilenceBreak=false; lastSrcEndedSentence=true;
   refinedSegs.clear(); refineQueue=[]; refineBusy=false;
+  if(!keepSession){ meetingRollingSummary=''; suggestSegCount=0; suggestHistory=[]; closeSuggestPanel(); }
   longNoticeShown=false;
   hideNotice();
   checkStorage();   // 시작 전에 저장 공간을 미리 확인
