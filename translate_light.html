@@ -2,6 +2,14 @@
 <!DOCTYPE html>
 <!--
   LIVE translate Light
+  L1.7  2026.08.09  🔍 팩트체크 탭 신규 추가 — factcheck.html의 검증 로직(주장 추출 →
+                    Google 검색 검증 → 사실/거짓/과장/불확실/맥락필요 판정, 팩트체크 범위
+                    3단계, 1회 최대 검증 수, 누적 검증)을 번역문(dst) 기준으로 이식. 결과는
+                    currentSession.factResults에 저장되어 기존 세션 저장/불러오기에 자동
+                    포함됨. 📎 회의 자료 첨부·🔗 URL 추가 — 파일/링크에서 받아쓰기 키워드
+                    (sttHint에 자동 반영) + 팩트체크 근거 요약(gtl_materials에 누적)을 함께
+                    추출해 판정 시 검색 결과와 나란히 참고. 기존 번역 화면(원문/번역)에
+                    하이라이트 표시는 리스크 관리를 위해 이번엔 넣지 않음(전용 탭 카드로만 표시).
   L1.6  2026.08.09  ① 문단 과다 분리 수정 — 문단을 나눌지는 "화면 표시 후 경과한 실제 시간"을
                     재는 타이머(PARA_GAP 2.5초)로 판단했는데, 청크가 순차 처리되는 이 배치
                     구조에서는 API 응답 지연만으로도 이 시간이 쉽게 넘어가 화자가 쉬지 않았는데도
@@ -253,6 +261,40 @@
   .btn-save-edit { background: #30d158; color: #fff; }
   .btn-cancel-edit { background: transparent; color: #888; border: 0.5px solid #444; }
 
+  /* ── 팩트체크 탭 ── */
+  .link-btn { background: transparent; color: #888; border: 0.5px solid #444; border-radius: 7px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  .fc-page { padding: 1rem; overflow-y: auto; flex: 1; min-height: 0; }
+  .fc-ctrl-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1rem; }
+  .fc-ctrl-row .sg { min-width: 140px; }
+  #factBtn { background: #f0c674; color: #1a1400; font-weight: 700; }
+  #factBtn:disabled { opacity: 0.4; }
+  .fc-material-box { border: 0.5px solid #2a2a2a; border-radius: 10px; padding: 0.8rem; margin-bottom: 1rem; background: #111; }
+  .fc-material-box label { font-size: 11px; color: #888; display: block; margin-bottom: 4px; }
+  #materialStatus { font-size: 10px; color: #8a7a4a; margin-top: 6px; min-height: 12px; }
+  .result-summary { font-size: 12px; color: #aaa; padding: 6px 10px; background: #151515; border: 0.5px solid #262626; border-radius: 8px; margin-bottom: 12px; line-height: 1.6; display: none; position: sticky; top: 0; z-index: 5; }
+  .result-summary.show { display: block; }
+  .result-summary b { color: #f0f0f0; }
+  .fc-card { border: 0.5px solid #262626; border-left-width: 3px; border-radius: 10px; padding: 0.75rem 0.85rem; margin-bottom: 12px; background: #151515; }
+  .fc-card.v-true { border-left-color: #30d158; }
+  .fc-card.v-false { border-left-color: #ff453a; }
+  .fc-card.v-exagg { border-left-color: #f0c674; }
+  .fc-card.v-unsure { border-left-color: #8ab4d8; }
+  .fc-card.v-context { border-left-color: #b18aff; }
+  .fc-badge { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 5px; padding: 2px 9px; margin-bottom: 8px; letter-spacing: 0.02em; }
+  .v-true .fc-badge { background: #1d3a1d; color: #30d158; }
+  .v-false .fc-badge { background: #3a1414; color: #ff6b60; }
+  .v-exagg .fc-badge { background: #2e2810; color: #f0c674; }
+  .v-unsure .fc-badge { background: #12283a; color: #8ab4d8; }
+  .v-context .fc-badge { background: #241a3a; color: #b18aff; }
+  .fc-num { display: inline-block; min-width: 19px; height: 19px; line-height: 19px; text-align: center; font-size: 11px; font-weight: 700; border-radius: 50%; background: #2c2c2c; color: #ddd; margin-right: 7px; vertical-align: 1px; }
+  .fc-claim { font-size: 14px; color: #f0f0f0; line-height: 1.6; margin-bottom: 6px; font-weight: 500; word-break: break-word; }
+  .fc-reason { font-size: 13px; color: #b8b8b8; line-height: 1.65; margin-bottom: 8px; word-break: break-word; }
+  .fc-sources { display: flex; flex-direction: column; gap: 3px; }
+  .fc-sources a { font-size: 11px; color: #8ab4d8; text-decoration: none; }
+  .fc-sources a:hover { text-decoration: underline; }
+  .fc-src-label { font-size: 9px; color: #555; letter-spacing: 0.08em; margin-bottom: 2px; }
+  .fc-spin { font-size: 13px; color: #f0c674; }
+
   @media (max-width: 599px) {
     .settings { flex-direction: column; }
     .ctrl-scroll { flex-wrap: wrap; overflow-x: visible; }
@@ -276,6 +318,7 @@
 <div class="tab-bar">
   <button class="tab active" onclick="switchTab('translate')">🎙 실시간 번역 (Light)</button>
   <button class="tab" onclick="switchTab('minutes')">📋 회의록</button>
+  <button class="tab" onclick="switchTab('factcheck')">🔍 팩트체크</button>
 </div>
 
 <!-- ══════════════ 번역 탭 ══════════════ -->
@@ -348,7 +391,7 @@
     <a class="manual-link" href="live_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/translate.html" title="음성 출력·대화 모드가 있는 기본 버전으로 이동">🔵 기본 버전</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/" title="버전을 비교하고 선택하는 첫 화면으로 이동">🏠 홈</a>
-    <div class="version-tag">Light v1.6 · 2026.08.09<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
+    <div class="version-tag">Light v1.7 · 2026.08.09<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
   </div>
 
   <!-- 공용 안내 배너 (저장 공간·긴 세션 경고) -->
@@ -446,6 +489,41 @@
   </div>
 </div>
 
+<!-- ══════════════ 팩트체크 탭 ══════════════ -->
+<div class="page" id="page-factcheck">
+  <div class="fc-page">
+    <div class="fc-material-box">
+      <label>📎 회의 자료 첨부 (PDF·텍스트·이미지 · 여러 개 · 받아쓰기 힌트 + 팩트체크 근거로 활용)</label>
+      <input type="file" id="materialInput" accept="application/pdf,text/plain,.txt,.md,.csv,image/*" multiple onchange="onMaterialUpload(this)" style="font-size:12px; color:#aaa; background:#1c1c1e; border:0.5px solid #444; border-radius:7px; padding:5px; width:100%;">
+      <label style="margin-top:10px;">🔗 자료 링크 (URL · 위키·웹페이지 등 · 여러 개는 줄바꿈/콤마)</label>
+      <textarea id="materialUrls" rows="2" placeholder="https://ko.wikipedia.org/wiki/...&#10;https://example.com/report" style="width:100%; background:#1c1c1e; color:#eee; border:0.5px solid #444; border-radius:8px; padding:6px 8px; font-size:12px; resize:vertical;"></textarea>
+      <button class="link-btn" onclick="onMaterialUrls()" style="margin-top:6px;">🔗 링크에서 용어·근거 추출</button>
+      <div id="materialStatus"></div>
+    </div>
+
+    <div class="fc-ctrl-row">
+      <button id="factBtn" onclick="runFactcheck()">🔍 팩트체크 실행</button>
+      <div class="sg">
+        <label>팩트체크 범위</label>
+        <select id="checkScope" onchange="saveSettings()">
+          <option value="broad">폭넓게 — 사실 인용·수치는 대부분</option>
+          <option value="normal" selected>보통 — 확인 가치 있는 주장 위주</option>
+          <option value="strict">중요한 것만 — 핵심·논쟁적 주장만</option>
+        </select>
+      </div>
+      <div class="sg">
+        <label>1회 최대 검증 수</label>
+        <input type="number" id="maxClaims" min="1" max="30" value="10" onchange="saveSettings()" style="width:70px;">
+      </div>
+    </div>
+
+    <div class="result-summary" id="resultSummary"></div>
+    <div id="resultCards">
+      <div class="empty-msg">번역 탭에서 회의를 기록한 뒤<br><b>🔍 팩트체크 실행</b>을 누르면<br>검증할 주장을 뽑아 인터넷 검색으로 확인해 드립니다.</div>
+    </div>
+  </div>
+</div>
+
 <!-- 세션 상세 모달 -->
 <div class="modal-overlay hidden" id="modalOverlay" onclick="closeModalOutside(event)">
   <div class="modal">
@@ -523,10 +601,11 @@ let modalSession = null;   // 모달에서 보고 있는 저장된 세션
 // 탭 전환
 // ══════════════════════════════════════
 function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active', ['translate','minutes'][i]===tab));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active', ['translate','minutes','factcheck'][i]===tab));
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+tab).classList.add('active');
   if(tab==='minutes') refreshMinutesTab();
+  if(tab==='factcheck') renderFactResults();
 }
 
 // ══════════════════════════════════════
@@ -1038,6 +1117,8 @@ function saveSettings(){
   const pf=document.getElementById('myProfile'); if(pf) localStorage.setItem('gtl_myProfile', pf.value||'');
   const mi=document.getElementById('meetingInfo'); if(mi) localStorage.setItem('gtl_meetingInfo', mi.value||'');
   const sh=document.getElementById('sttHint'); if(sh) localStorage.setItem('gtl_sttHint', sh.value||'');
+  const mc=document.getElementById('maxClaims'); if(mc) localStorage.setItem('gtl_maxClaims', mc.value||'10');
+  const cs=document.getElementById('checkScope'); if(cs) localStorage.setItem('gtl_scope', cs.value||'normal');
 }
 
 function loadSettings(){
@@ -1052,6 +1133,10 @@ function loadSettings(){
   const pf=document.getElementById('myProfile'); if(pf) pf.value = localStorage.getItem('gtl_myProfile')||'';
   const mi=document.getElementById('meetingInfo'); if(mi) mi.value = localStorage.getItem('gtl_meetingInfo')||'';
   const sh=document.getElementById('sttHint'); if(sh) sh.value = localStorage.getItem('gtl_sttHint')||'';
+  const mc=document.getElementById('maxClaims'); if(mc) mc.value = localStorage.getItem('gtl_maxClaims')||'10';
+  const csv=localStorage.getItem('gtl_scope'); const csEl=document.getElementById('checkScope');
+  if(csEl && csv && [...csEl.options].some(o=>o.value===csv)) csEl.value = csv;
+  updateMaterialStatus();
   const fs = parseInt(localStorage.getItem('gtl_fontsize')||'15',10);
   if(fs>=11 && fs<=26) applyFont(fs);
   const rv = localStorage.getItem('gtl_refine');
@@ -1171,6 +1256,305 @@ async function suggestReply(){
 document.getElementById('myProfile')?.addEventListener('change', saveSettings);
 document.getElementById('meetingInfo')?.addEventListener('change', saveSettings);
 document.getElementById('sttHint')?.addEventListener('change', saveSettings);
+
+// ══════════════════════════════════════
+// 팩트체크 (factcheck.html의 검증된 로직을 이식 — 주장 추출 → Google 검색 검증)
+// ══════════════════════════════════════
+function esc(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function fcApiCall(body){
+  const key = document.getElementById('apiKey').value.trim();
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+BATCH_MODEL+':generateContent?key='+encodeURIComponent(key), {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  if(!res.ok){
+    let detail=''; try{ const j=await res.json(); detail = j.error && j.error.message ? j.error.message : ''; }catch(_){}
+    throw new Error('HTTP '+res.status+(detail?' — '+detail:''));
+  }
+  return res.json();
+}
+function fcExtractText(data){ try{ return (data.candidates[0].content.parts||[]).map(p=>p.text||'').join(''); }catch(_){ return ''; } }
+function fcExtractSources(data){
+  const out=[];
+  try{
+    const chunks = data.candidates[0].groundingMetadata.groundingChunks || [];
+    for(const c of chunks){ if(c.web && c.web.uri) out.push({ uri:c.web.uri, title:c.web.title||c.web.uri }); }
+  }catch(_){}
+  return out;
+}
+
+/* ── 회의 자료 첨부/링크 → (1) 받아쓰기 키워드 + (2) 팩트체크 근거 요약 ── */
+function getMaterials(){ try{ return JSON.parse(localStorage.getItem('gtl_materials')||'[]'); }catch(_){ return []; } }
+function addMaterial(label, evidence){
+  if(!evidence) return;
+  const list = getMaterials();
+  list.push({ label, text: evidence.trim() });
+  while(list.reduce((n,m)=>n+m.text.length,0) > 6000 && list.length>1) list.shift();
+  localStorage.setItem('gtl_materials', JSON.stringify(list));
+  updateMaterialStatus();
+}
+function clearMaterials(){
+  if(!confirm('첨부자료 근거를 모두 지울까요? (받아쓰기 키워드는 유지됩니다)')) return;
+  localStorage.removeItem('gtl_materials');
+  updateMaterialStatus();
+}
+function buildMaterialContext(){
+  const list = getMaterials();
+  if(!list.length) return '';
+  return list.map(m=>'[자료: '+m.label+']\n'+m.text).join('\n\n');
+}
+function updateMaterialStatus(){
+  const el = document.getElementById('materialStatus'); if(!el) return;
+  const list = getMaterials();
+  if(!list.length){ el.innerHTML=''; return; }
+  const chars = list.reduce((n,m)=>n+m.text.length,0);
+  el.innerHTML = '📎 저장된 자료 근거 '+list.length+'건('+chars.toLocaleString()+'자) — 팩트체크 시 검색 결과와 함께 참고됩니다 '
+    + '<button class="link-btn" style="padding:1px 7px;font-size:10px;" onclick="clearMaterials()">지우기</button>';
+}
+function fileToInlinePart(file){
+  return new Promise((resolve,reject)=>{
+    const r = new FileReader();
+    r.onload = () => resolve({ inlineData: { mimeType: file.type||'application/octet-stream', data: (r.result+'').split(',')[1] } });
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+const MATERIAL_SCHEMA = { type:'OBJECT', properties:{ keywords:{type:'STRING'}, evidence:{type:'STRING'} }, required:['keywords','evidence'] };
+const MATERIAL_INSTRUCTION =
+  '- keywords: 받아쓰기 정확도를 높이기 위한 고유명사(인물·회사·기관·제품·지명)·약어·전문용어 목록. 쉼표로 구분, 300자 이내.\n' +
+  '- evidence: 팩트체크(사실 검증)에 근거로 쓸 수 있도록, 자료에 나온 핵심 주장·수치·날짜·결론을 한국어로 요약. 1200자 이내, 불릿 형태 권장.\n' +
+  '설명·인사말 없이 JSON 필드만 채워라.';
+async function onMaterialUpload(input){
+  const files = [...(input.files||[])];
+  if(!files.length) return;
+  const status = document.getElementById('materialStatus');
+  const key = document.getElementById('apiKey').value.trim();
+  if(!key){ toggleSettings(); status.textContent='먼저 API 키를 입력하세요'; input.value=''; return; }
+  status.textContent = '📎 자료 분석 중… ('+files.length+'개)';
+  try{
+    const parts=[];
+    for(const f of files){
+      const isText = (f.type && f.type.startsWith('text')) || /\.(txt|md|csv)$/i.test(f.name);
+      if(isText){ const t=await f.text(); parts.push({ text:'[자료: '+f.name+']\n'+t.slice(0,200000) }); }
+      else{ parts.push(await fileToInlinePart(f)); }
+    }
+    const prompt = '첨부한 회의 자료를 분석해 다음 두 가지를 JSON으로 답하라.\n'+MATERIAL_INSTRUCTION;
+    const data = await fcApiCall({ contents:[{ role:'user', parts:[{text:prompt}, ...parts] }],
+      generationConfig:{ temperature:0.2, responseMimeType:'application/json', responseSchema:MATERIAL_SCHEMA } });
+    let obj={}; try{ obj = JSON.parse(fcExtractText(data)); }catch(_){}
+    const kw = (obj.keywords||'').trim();
+    if(!kw && !obj.evidence){ status.textContent='자료에서 내용을 추출하지 못했습니다.'; return; }
+    if(kw){ const sh=document.getElementById('sttHint'); const cur=sh.value.trim(); sh.value = cur ? (cur+', '+kw) : kw; saveSettings(); }
+    addMaterial(files.map(f=>f.name).join(', '), obj.evidence||'');
+    status.textContent = '✅ 자료 '+files.length+'개 분석 완료 — 키워드 반영 + 팩트체크 근거로 저장됨';
+  }catch(e){
+    status.textContent = '추출 실패: '+e.message;
+  }finally{
+    input.value='';
+  }
+}
+async function onMaterialUrls(){
+  const raw = (document.getElementById('materialUrls').value||'').trim();
+  const status = document.getElementById('materialStatus');
+  const key = document.getElementById('apiKey').value.trim();
+  if(!key){ toggleSettings(); status.textContent='먼저 API 키를 입력하세요'; return; }
+  const urls = raw.split(/[\s,]+/).filter(u=>/^https?:\/\//i.test(u));
+  if(!urls.length){ status.textContent='http(s):// 로 시작하는 URL을 입력하세요'; return; }
+  status.textContent = '🔗 링크 분석 중… ('+urls.length+'개)';
+  try{
+    const prompt = '다음 URL들의 내용을 읽고 아래 형식 그대로만 답하라(다른 말 금지).\n\n'
+      + '키워드: <받아쓰기용 고유명사·약어·전문용어를 쉼표로, 300자 이내>\n'
+      + '근거: <팩트체크에 쓸 핵심 주장·수치·날짜·결론 요약, 1200자 이내, 불릿 형태 권장>\n\n'
+      + 'URL:\n'+urls.join('\n');
+    const data = await fcApiCall({ contents:[{ role:'user', parts:[{text:prompt}] }], tools:[{url_context:{}}], generationConfig:{temperature:0.2} });
+    const text = fcExtractText(data)||'';
+    const kwM = text.match(/키워드\s*[:：]\s*([\s\S]*?)(?:\n근거\s*[:：]|$)/);
+    const evM = text.match(/근거\s*[:：]\s*([\s\S]*)$/);
+    const kw = (kwM?kwM[1]:'').trim();
+    const evidence = (evM?evM[1]:'').trim();
+    if(!kw && !evidence){ status.textContent='링크에서 내용을 추출하지 못했습니다.'; return; }
+    if(kw){ const sh=document.getElementById('sttHint'); const cur=sh.value.trim(); sh.value = cur ? (cur+', '+kw) : kw; saveSettings(); }
+    addMaterial(urls.join(', '), evidence);
+    status.textContent = '✅ 링크 '+urls.length+'개 분석 완료 — 키워드 반영 + 팩트체크 근거로 저장됨';
+  }catch(e){
+    status.textContent = '링크 분석 실패: '+e.message+' (일부 페이지·로그인 필요 링크는 못 읽을 수 있습니다)';
+  }
+}
+
+/* ── 주장 추출 ── */
+const CHECK_SCOPE_INSTRUCTION = {
+  broad: '- 범위: 폭넓게 선택하라. 사소해 보이더라도 숫자·통계·날짜·고유명사·인용·수치가 포함된 사실 진술이면 대부분 포함하라.',
+  normal: '- 범위: 보통 수준으로 선택하라. 확인할 가치가 있는(틀렸을 때 의미가 있는) 사실 주장 위주로 고르되, 지나치게 사소한 숫자까지 다 뽑지는 않는다.',
+  strict: '- 범위: 엄선하라. 회의의 결론·의사결정에 영향을 주거나, 틀렸을 때 파급력이 크거나, 논쟁의 여지가 있는 핵심 주장만 골라라. 사소한 수치나 지엽적인 사실 인용은 제외한다.'
+};
+async function extractClaims(transcript, max, exclude, scope, targetLangName){
+  const excludeBlock = (exclude && exclude.length)
+    ? '\n\n[이미 검증이 끝난 주장] 아래와 같은 내용은 절대 다시 포함하지 말고, 새로 등장한 내용만 뽑아라:\n- '+exclude.join('\n- ')+'\n'
+    : '';
+  const scopeInstruction = CHECK_SCOPE_INSTRUCTION[scope] || CHECK_SCOPE_INSTRUCTION.normal;
+  const prompt =
+    '다음은 '+(targetLangName||'한국어')+'로 번역된 회의 기록이다. 이 중에서 "사실 여부를 인터넷 검색으로 검증할 가치가 있는 주장"만 골라라.\n'
+    + '- 숫자·통계·날짜·고유명사·역사적/과학적 사실·인용·시장 데이터 등 객관적으로 확인 가능한 사실 주장만 선택\n'
+    + '- 개인 의견, 감정 표현, 미래 계획/다짐, 애매한 잡담, 인사말은 제외\n'
+    + scopeInstruction + '\n'
+    + '- claim: 그 자체로 검색 가능하도록 완결된 한국어 문장으로 다시 써라\n'
+    + '- 중요도가 높은 순으로 최대 '+max+'개까지\n'
+    + '- 검증할 만한 주장이 없으면 빈 배열을 반환' + excludeBlock + '\n\n'
+    + '회의 기록:\n"""\n'+transcript+'\n"""';
+  const data = await fcApiCall({ contents:[{ parts:[{text:prompt}] }],
+    generationConfig:{ temperature:0.2, responseMimeType:'application/json',
+      responseSchema:{ type:'ARRAY', items:{ type:'OBJECT', properties:{ claim:{type:'STRING'}, context:{type:'STRING'} }, required:['claim'] } } } });
+  let arr=[]; try{ arr = JSON.parse(fcExtractText(data)); }catch(_){}
+  if(!Array.isArray(arr)) arr=[];
+  return arr.filter(x=>x && x.claim).slice(0,max);
+}
+function claimKey(x){ return ((x && x.claim)||'').replace(/\s+/g,'').toLowerCase(); }
+
+/* ── 주장 검증 ── */
+const VERDICTS = {
+  '사실':{cls:'v-true'}, '거짓':{cls:'v-false'}, '과장':{cls:'v-exagg'}, '불확실':{cls:'v-unsure'}, '맥락필요':{cls:'v-context'}
+};
+async function verifyClaim(item){
+  const materialContext = buildMaterialContext();
+  const prompt =
+    '다음 "주장"이 사실인지 확인하고 판정하라.\n'
+    + '주장: "'+item.claim+'"\n'
+    + (item.context ? '회의 맥락: '+item.context+'\n' : '')
+    + (materialContext ? '\n[첨부된 회의 자료 근거]\n'+materialContext+'\n' : '')
+    + '\n판정 기준(아래 정의를 엄격히 따를 것):\n'
+    + '- 사실: 핵심 내용이 근거와 일치함\n'
+    + '- 거짓: 핵심 사실 자체가 근거와 명백히 어긋남(핵심이 맞으면 표현이 다소 부정확해도 거짓으로 판정하지 말 것)\n'
+    + '- 과장: 방향·핵심은 맞으나 수치나 정도가 부풀려짐\n'
+    + '- 맥락필요: 대체로 맞지만 중요한 조건·맥락이 빠져 오해의 소지가 있음\n'
+    + '- 불확실: 신뢰할 만한 근거를 찾지 못함\n'
+    + (materialContext
+      ? '\n근거 우선순위: 회의 자체(내부 수치·비공개 계획 등 웹에 없는 사실)에 관한 주장은 [첨부된 회의 자료 근거]를 우선 신뢰하라. 공개적으로 확인 가능한 사실은 Google 검색 결과를 우선하라. 두 근거가 다르면 어느 쪽을 근거로 판정했는지 명시하라.\n'
+      : '')
+    + '\n반드시 아래 형식으로만, 한국어로 답하라:\n'
+    + '판정: <사실|거짓|과장|불확실|맥락필요 중 정확히 하나>\n'
+    + '근거: <근거에 기반한 1~2문장 설명. 첨부자료를 근거로 썼다면 "(첨부자료 기준)"을 문장 끝에 덧붙여라>\n\n'
+    + '규칙: 최신·정확한 정보를 검색해 판단할 것. 판정 단어는 반드시 5개 중 하나만 쓸 것.';
+  const data = await fcApiCall({ contents:[{parts:[{text:prompt}]}], tools:[{google_search:{}}], generationConfig:{temperature:0} });
+  const text = fcExtractText(data);
+  const sources = fcExtractSources(data);
+  let verdict='불확실', reason=text.trim();
+  const vm = text.match(/판정\s*[:：]\s*\[?\s*(사실|거짓|과장|불확실|맥락필요)/);
+  if(vm) verdict = vm[1];
+  const rm = text.match(/근거\s*[:：]\s*([\s\S]+)/);
+  if(rm) reason = rm[1].trim();
+  const usedMaterial = /\(첨부자료 기준\)/.test(reason);
+  return { claim:item.claim, verdict, reason, sources, usedMaterial };
+}
+
+/* ── 실행 · 렌더링 ── */
+function buildFactTranscript(){
+  if(!currentSession) return '';
+  return pairSegments(currentSession).map(sg=>(sg.dst||[]).map(x=>x.text).join(' ').trim()).filter(Boolean).join('\n');
+}
+async function runFactcheck(){
+  const key = document.getElementById('apiKey').value.trim();
+  if(!key){ toggleSettings(); showErr('먼저 API 키를 입력하세요'); return; }
+  const transcript = buildFactTranscript();
+  if(transcript.length < 5){ showErr('회의 기록이 비어 있습니다. 번역 탭에서 먼저 기록하세요.'); return; }
+  if(!currentSession.factResults) currentSession.factResults = [];
+  if(!currentSession.factCheckedKeys) currentSession.factCheckedKeys = [];
+
+  const max = Math.max(1, Math.min(30, parseInt(document.getElementById('maxClaims').value)||10));
+  const scope = document.getElementById('checkScope').value;
+  const targetLangName = langName[document.getElementById('dstLang')?.value] || '한국어';
+  const btn = document.getElementById('factBtn'); btn.disabled = true;
+  const cards = document.getElementById('resultCards');
+  const ph = cards.querySelector('.empty-msg'); if(ph) ph.remove();
+  const spin = document.createElement('div'); spin.className='fc-spin'; spin.textContent='🧠 새로 검증할 주장을 찾는 중…';
+  cards.appendChild(spin);
+
+  try{
+    const exclude = currentSession.factResults.map(r=>r.claim);
+    let claims = await extractClaims(transcript, max, exclude, scope, targetLangName);
+    claims = claims.filter(c=>!currentSession.factCheckedKeys.includes(claimKey(c)));
+    spin.remove();
+
+    if(!claims.length){
+      if(!currentSession.factResults.length) cards.innerHTML = '<div class="empty-msg">검증할 만한 사실 주장을 찾지 못했습니다.<br>내용을 더 기록한 뒤 다시 시도해 보세요.</div>';
+      setStatus('','완료 — 새로 검증할 주장이 없습니다 (누적 '+currentSession.factResults.length+'건)');
+      return;
+    }
+    const base = currentSession.factResults.length;
+    const nodes = claims.map((c,i)=>{
+      const d = document.createElement('div'); d.className='fc-card loading';
+      d.innerHTML = '<span class="fc-num">'+(base+i+1)+'</span><span class="fc-claim" style="display:inline">'+esc(c.claim)+'</span><div class="fc-spin">🔍 검색·검증 중…</div>';
+      cards.appendChild(d); return d;
+    });
+    const results = new Array(claims.length);
+    let done=0; const CONC=3; let idx=0;
+    async function worker(){
+      while(idx < claims.length){
+        const i = idx++;
+        try{ results[i] = await verifyClaim(claims[i]); }
+        catch(e){ results[i] = { claim: claims[i].claim, verdict:'불확실', reason:'검증 실패: '+e.message, sources:[] }; }
+        done++;
+        renderCard(nodes[i], results[i], base+i+1);
+        setStatus('','🔍 인터넷 검색으로 검증 중… ('+done+'/'+claims.length+')');
+      }
+    }
+    setStatus('','🔍 인터넷 검색으로 검증 중… (0/'+claims.length+')');
+    await Promise.all(Array.from({length:Math.min(CONC,claims.length)}, worker));
+
+    currentSession.factResults = currentSession.factResults.concat(results);
+    results.forEach(r=>currentSession.factCheckedKeys.push(claimKey(r)));
+    renderSummary(currentSession.factResults);
+    upsertSession(currentSession);
+    setStatus('','✅ 완료 — 이번 '+results.length+'건, 누적 '+currentSession.factResults.length+'건');
+  }catch(e){
+    spin.remove();
+    showErr('팩트체크 오류: '+e.message);
+    if(!currentSession.factResults.length) cards.innerHTML = '<div class="empty-msg">팩트체크 중 오류가 발생했습니다.<br>'+esc(e.message)+'</div>';
+  }finally{
+    btn.disabled = false;
+  }
+}
+function renderCard(node, r, num){
+  const v = VERDICTS[r.verdict] || VERDICTS['불확실'];
+  node.className = 'fc-card '+v.cls;
+  let html = '<span class="fc-num">'+num+'</span><span class="fc-badge">'+esc(r.verdict)+'</span>';
+  if(r.usedMaterial) html += '<span class="fc-badge" style="background:#2a1e40;color:#c9a8ff;margin-left:4px;">📎 자료 근거</span>';
+  html += '<div class="fc-claim">'+esc(r.claim)+'</div>';
+  html += '<div class="fc-reason">'+esc(r.reason)+'</div>';
+  if(r.sources && r.sources.length){
+    html += '<div class="fc-sources"><div class="fc-src-label">출처</div>';
+    for(const s of r.sources.slice(0,5)) html += '<a href="'+esc(s.uri)+'" target="_blank" rel="noopener">🔗 '+esc(s.title)+'</a>';
+    html += '</div>';
+  }
+  node.innerHTML = html;
+}
+function renderSummary(results){
+  const c = { '사실':0,'거짓':0,'과장':0,'불확실':0,'맥락필요':0 };
+  results.forEach(r=>{ c[r.verdict]=(c[r.verdict]||0)+1; });
+  const el = document.getElementById('resultSummary');
+  el.innerHTML = '총 <b>'+results.length+'</b>건 · '
+    + '<b style="color:#30d158">사실 '+c['사실']+'</b> · '
+    + '<b style="color:#ff6b60">거짓 '+c['거짓']+'</b> · '
+    + '<b style="color:#f0c674">과장 '+c['과장']+'</b> · '
+    + '<b style="color:#8ab4d8">불확실 '+c['불확실']+'</b> · '
+    + '<b style="color:#b18aff">맥락필요 '+c['맥락필요']+'</b>';
+  el.classList.add('show');
+}
+// 팩트체크 탭으로 전환할 때, 현재 세션에 누적된 결과를 다시 그린다
+function renderFactResults(){
+  const cards = document.getElementById('resultCards');
+  const results = (currentSession && currentSession.factResults) || [];
+  if(!results.length){
+    cards.innerHTML = '<div class="empty-msg">번역 탭에서 회의를 기록한 뒤<br><b>🔍 팩트체크 실행</b>을 누르면<br>검증할 주장을 뽑아 인터넷 검색으로 확인해 드립니다.</div>';
+    document.getElementById('resultSummary').classList.remove('show');
+    return;
+  }
+  cards.innerHTML='';
+  results.forEach((r,i)=>{
+    const d = document.createElement('div'); cards.appendChild(d);
+    renderCard(d, r, i+1);
+  });
+  renderSummary(results);
+}
 
 // 입력 시 자동 저장
 document.getElementById('apiKey').addEventListener('change', ()=>{
@@ -1627,7 +2011,7 @@ async function startTranslation(){
       startTime: new Date().toISOString(),
       startTimeStr: dateStr(),
       lang: (document.getElementById('dstLang')?.value||'ko')+'|'+(document.getElementById('srcLang')?.value||'auto'),
-      src:[], dst:[], summary:'', durationSec:0
+      src:[], dst:[], summary:'', durationSec:0, factResults:[], factCheckedKeys:[]
     };
     if(!hasExisting){
       document.getElementById('srcBox').innerHTML='';
