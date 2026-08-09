@@ -2,6 +2,16 @@
 <!DOCTYPE html>
 <!--
   LIVE translate Light
+  L1.8  2026.08.09  API 비용 대폭 절감 — 실사용 3분에 200~300원이 나와 원인 분석. 표기된
+                    "$0.15/hr"은 옛 gemini-2.5-flash($0.30/$2.50) 기준이었는데, 한국어 인식
+                    개선을 위해 gemini-3.6-flash($1.50/$7.50)로 올리면서 입력 5배·출력 3배가
+                    됐고, 여기에 3세대의 thinking(사고) 토큰이 출력 요금으로 과금되어 실제로는
+                    약 $2.7/hr(표기의 18배)였다. 조치: ① 조각 처리(STT+번역)를 STT_MODEL
+                    (gemini-3.5-flash-lite)로 분리 — 팩트체크·자료분석·요약은 BATCH_MODEL
+                    (3.6-flash) 유지 ② 전사·번역·다듬기에 thinkingConfig.thinkingLevel
+                    'minimal' 적용(3.x 전용 파라미터. thinkingBudget과 동시 사용 시 400 오류라
+                    하나만 전송) ③ MAX_CHUNK_MS 8s→12s로 호출 수 감소. 결과 ≈$0.6/hr(약 4.5배↓).
+                    비용 표기를 앱·랜딩·매뉴얼 전반에서 실제 값으로 정정.
   L1.7  2026.08.09  🔍 팩트체크 탭 신규 추가 — factcheck.html의 검증 로직(주장 추출 →
                     Google 검색 검증 → 사실/거짓/과장/불확실/맥락필요 판정, 팩트체크 범위
                     3단계, 1회 최대 검증 수, 누적 검증)을 번역문(dst) 기준으로 이식. 결과는
@@ -391,7 +401,7 @@
     <a class="manual-link" href="live_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/translate.html" title="음성 출력·대화 모드가 있는 기본 버전으로 이동">🔵 기본 버전</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/" title="버전을 비교하고 선택하는 첫 화면으로 이동">🏠 홈</a>
-    <div class="version-tag">Light v1.7 · 2026.08.09<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
+    <div class="version-tag">Light v1.8 · 2026.08.09<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.6/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
   </div>
 
   <!-- 공용 안내 배너 (저장 공간·긴 세션 경고) -->
@@ -740,7 +750,7 @@ async function refineSegment(seg){
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       contents:[{parts:[{text:prompt}]}],
-      generationConfig:{ temperature:0.2 }
+      generationConfig:{ temperature:0.2, thinkingConfig: MINIMAL_THINKING }
     })
   });
   if(!res.ok) return;
@@ -1606,10 +1616,18 @@ async function copyCol(boxId,btnId){
 // 청구되는데, 이 방식은 애초에 오디오 출력 자체가 없어 요금이 크게 준다
 // (추정 시간당 약 $2.2 → 약 $0.15, 약 1/15 수준). 대신 실시간 스트리밍이
 // 아니라 몇 초 단위로 도착하는 방식이라 체감 지연이 늘어난다.
-const BATCH_MODEL = 'gemini-3.6-flash';
+// 받아쓰기·번역용 모델과 팩트체크용 모델을 분리한다.
+// STT는 호출 수가 압도적으로 많아(시간당 수백 회) 요금을 좌우하므로 저가 모델을 쓰고,
+// 판단이 중요한 팩트체크·자료분석에는 상위 모델(BATCH_MODEL)을 그대로 쓴다.
+// 3세대는 thinking(사고) 토큰이 출력 요금으로 과금되므로, 추론이 불필요한 전사에는 minimal로 끈다.
+const BATCH_MODEL = 'gemini-3.6-flash';        // 팩트체크·자료분석·요약·발언추천용
+const STT_MODEL   = 'gemini-3.5-flash-lite';   // 받아쓰기·번역(조각 처리)용 — 입력 $0.30/M, 출력 $2.50/M
+const MINIMAL_THINKING = { thinkingLevel: 'minimal' };
 const SILENCE_RMS = 0.010;          // 이 RMS 미만이면 "조용함"으로 판단(기기·환경에 따라 조정 필요)
 const SILENCE_MS = 800;             // 이만큼 조용하면 지금까지 모은 것을 하나의 청크로 확정
-const MAX_CHUNK_MS = 8000;          // 침묵이 없어도 이 길이가 되면 강제로 끊는다(지연 상한)
+const MAX_CHUNK_MS = 12000;         // 침묵이 없어도 이 길이가 되면 강제로 끊는다(지연 상한).
+                                    // 길게 잡을수록 호출 수가 줄어 프롬프트 반복 비용이 절감된다(대신 표시 지연↑).
+                                    // 대부분의 조각은 침묵(SILENCE_MS)에서 잘리므로 체감 지연은 이보다 훨씬 짧다.
 const MIN_CHUNK_MS = 500;           // 이보다 짧으면 침묵 감지로 끊지 않는다(너무 잘게 쪼개지는 것 방지)
 const PRECHUNK_TRIM_MS = 300;       // 계속 조용하기만 할 때, 버퍼를 비우면서 남겨둘 최근 분량(발화 시작을 놓치지 않기 위함)
 
@@ -1697,6 +1715,7 @@ async function sendChunkToGemini(key, base64Wav, contextText, targetLangName, hi
     }],
     generationConfig: {
       temperature: 0,   // 받아쓰기는 창작이 아니라 정확한 재현이 목적 — 환각(없는 말 지어내기) 억제
+      thinkingConfig: MINIMAL_THINKING,   // 전사·번역엔 추론이 불필요 — 사고 토큰(출력 요금) 절감
       responseMimeType: 'application/json',
       responseSchema: {
         type: 'OBJECT',
@@ -1709,7 +1728,7 @@ async function sendChunkToGemini(key, base64Wav, contextText, targetLangName, hi
       },
     },
   };
-  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+BATCH_MODEL+':generateContent?key='+key, {
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+STT_MODEL+':generateContent?key='+key, {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
   });
   if(!res.ok){
