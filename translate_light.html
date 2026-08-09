@@ -2,6 +2,16 @@
 <!DOCTYPE html>
 <!--
   LIVE translate Light
+  L1.6  2026.08.09  ① 문단 과다 분리 수정 — 문단을 나눌지는 "화면 표시 후 경과한 실제 시간"을
+                    재는 타이머(PARA_GAP 2.5초)로 판단했는데, 청크가 순차 처리되는 이 배치
+                    구조에서는 API 응답 지연만으로도 이 시간이 쉽게 넘어가 화자가 쉬지 않았는데도
+                    문단이 계속 끊겼다(실측: 2분 회의가 16문단으로 과분할). 처리 속도와 무관하게
+                    "오디오에 실제로 있었던 침묵 길이"(interSilence/chunkLongPause, VAD에서 직접
+                    측정)로 판단하도록 교체 — 청크 절단(SILENCE_MS·MAX_CHUNK_MS)은 그대로라
+                    받아쓰기 속도는 그대로 유지. 안 쓰게 된 segSilenceT/onSilenceTimeout/PARA_GAP
+                    제거. ② 받아쓰기 정확도 — 실사용 테스트에서 오디오에 없는 문장을 지어내는
+                    환각(hallucination) 사례 발견. STT 호출에 temperature:0 추가 + 프롬프트에
+                    "실제로 들리지 않은 문장은 추가하지 말 것" 지시 강화.
   L1.5  2026.08.09  받아쓰기 구간 누락 버그 수정 — 청크 처리 실패(주로 429 요청빈도초과)를 재시도
                     없이 버려 몇 분마다 문장이 통째로 빠지던 문제. 429/5xx는 짧은 대기 후 자동
                     재시도(최대 2회, sendChunkWithRetry), 그래도 실패하면 '⚠️(받아쓰기 실패 —
@@ -338,7 +348,7 @@
     <a class="manual-link" href="live_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/translate.html" title="음성 출력·대화 모드가 있는 기본 버전으로 이동">🔵 기본 버전</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/" title="버전을 비교하고 선택하는 첫 화면으로 이동">🏠 홈</a>
-    <div class="version-tag">Light v1.5 · 2026.08.09<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
+    <div class="version-tag">Light v1.6 · 2026.08.09<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
   </div>
 
   <!-- 공용 안내 배너 (저장 공간·긴 세션 경고) -->
@@ -504,7 +514,6 @@ function sendUsageEvent(action, extra){
   }catch(_){}
 }
 const langName={ko:'한국어',en:'영어',ja:'일본어',zh:'중국어',es:'스페인어',de:'독일어',fr:'프랑스어'};
-const PARA_GAP=2500;
 
 // 현재 세션 데이터
 let currentSession = null; // {name, startTime, lang, src:[], dst:[]}
@@ -532,7 +541,6 @@ function clearAll(){
   }
   document.getElementById('srcBox').innerHTML='';
   document.getElementById('dstBox').innerHTML='';
-  if(segSilenceT){clearTimeout(segSilenceT);segSilenceT=null;}
   segId=0; segLang=''; segChars=0; dstSeg=0; dstPrevEnded=true;
   pendingCandidateLen=null; pendingSince=null;
   pendingSilenceBreak=false; lastSrcEndedSentence=true;
@@ -693,10 +701,9 @@ function applyRefined(t, refined){
 // ══════════════════════════════════════
 // 문단 관리 — 원문/번역이 같은 문단번호(segId)를 공유한다.
 // 이렇게 해야 좌우 화면이 동시에 나뉘고 회의록에서 원문·번역이 정확히 짝지어진다.
-// 문단이 바뀌는 조건: (1) 침묵 2.5초  (2) 원문 언어 변경(발언자 전환)  (3) 길이 초과
+// 문단이 바뀌는 조건: (1) 실제 오디오 침묵(PARA_BREAK_MS 이상)  (2) 원문 언어 변경(발언자 전환)  (3) 길이 초과
 // ══════════════════════════════════════
 let segId = 0;
-let segSilenceT = null;
 let segLang = '';     // 현재 문단의 원문 언어
 let segChars = 0;     // 현재 문단 누적 글자 수
 const SEG_SOFT_CHARS = 600;      // 이 길이를 넘으면 분리 후보를 찾기 시작한다
@@ -767,22 +774,22 @@ function bumpSegment(){
   if(refineOn && !convMode) scheduleRefine(finished);
 }
 
-// 말이 2.5초 이상 끊겼을 때. 문장이 완결된 상태라면 바로 나누고,
-// 문장 중간이라면 다음에 문장이 끝나는 시점까지 분리를 미룬다.
-function onSilenceTimeout(){
-  segSilenceT = null;
-  if(lastSrcEndedSentence) bumpSegment();
-  else pendingSilenceBreak = true;
-}
-
 // 원문이 도착할 때 호출해 문단 전환 여부를 판단한다.
 // 우선순위: ① 발언자가 바뀐 경우(언어 전환) 즉시 분리
-//          ② 그 외엔 대기 중인 후보가 있을 때만, 지금 들어온 말이
+//          ② 실제 오디오에 긴 침묵(longPause)이 있었던 경우 — 문장이 완결된
+//             상태라면 바로 나누고, 문장 중간이라면 끝날 때까지 분리를 미룬다.
+//             (예전엔 "화면 표시 후 경과한 실제 시간"을 재는 타이머로 판단했는데,
+//             API 응답이 조금만 늦어도 화자가 쉬지 않았는데 문단이 끊기는 문제가
+//             있었다 — 처리 속도와 무관하게 오디오 신호만으로 판단하도록 교체함)
+//          ③ 그 외엔 대기 중인 후보가 있을 때만, 지금 들어온 말이
 //             화제를 바꾸는지(즉시 분리) / 이어가는지(계속 대기) 판단
-function noteSource(text){
+function noteSource(text, longPause){
   const lang = detectScript(text);
   if(lang && segLang && lang !== segLang){
     bumpSegment();   // 발언자 전환 — 최우선, 즉시 분리
+  } else if(longPause){
+    if(lastSrcEndedSentence) bumpSegment();
+    else pendingSilenceBreak = true;
   } else if(pendingCandidateLen!=null){
     const cue = classifyCue(text);
     if(cue==='shift' || (segChars - pendingSince) >= SEG_LOOKAHEAD_CHARS){
@@ -796,9 +803,6 @@ function noteSource(text){
     // cue==='continue' 이거나 아직 여유분이 남아있으면 같은 문단에 계속 이어붙인다
   }
   if(lang && !segLang) segLang = lang;
-
-  if(segSilenceT) clearTimeout(segSilenceT);
-  segSilenceT = setTimeout(onSilenceTimeout, PARA_GAP);
 
   const before = segId;
   segChars += text.length;
@@ -1230,6 +1234,14 @@ let chunkSamples = 0;
 let silentSamples = 0;
 let hasSpeechInChunk = false;
 
+// 문단 분리를 "화면 표시 이후 경과한 실제 시간(PARA_GAP 타이머)"이 아니라
+// "오디오에 실제로 있었던 침묵 길이"로 판단하기 위한 상태. 기존 타이머 방식은
+// API 응답 지연이 조금만 있어도(네트워크 지연·순차 처리 대기) 화자가 쉬지 않았는데도
+// 문단이 끊기는 문제가 있었다 — 처리 속도와 무관하게 오디오 신호만으로 판단한다.
+let interSilence = 0;          // 조각 사이(발화 시작 전) 누적 침묵 샘플 수
+let chunkLongPause = false;    // 이번 조각 앞에 "실제로" 긴 침묵이 있었는지
+const PARA_BREAK_MS = 1500;    // 이 이상 실제 침묵이면 문단 분리 후보로 본다(문장 완결 시에만 분리)
+
 let chunkQueue = [];      // 완성된 조각들의 대기열(순서 보장을 위해 한 번에 하나씩 처리)
 let chunkProcessing = false;
 let lastContextText = ''; // 직전 조각의 원문 끝부분 — 다음 요청에 맥락으로 함께 보낸다
@@ -1240,7 +1252,8 @@ function buildTranslatePrompt(targetLangName, hint){
     + '- source_text: 들린 내용을 그대로 받아적은 원문(원래 발화된 언어 그대로, 여러 언어가 섞여도 그대로)\n'
     + '- translation: 그 내용을 자연스러운 '+targetLangName+'로 번역한 것\n'
     + '- language: 감지된 원문 언어의 BCP-47 코드(예: en, zh, ja, ko)\n\n'
-    + '정확도 규칙: 숫자·날짜·금액·퍼센트·고유명사(인명·지명·회사명)를 특히 정확히 받아적으세요. 들린 소리에 최대한 가깝게 적되, 문맥으로 그럴듯하게 지어내지 마세요.\n'
+    + '정확도 규칙: 숫자·날짜·금액·퍼센트·고유명사(인명·지명·회사명)를 특히 정확히 받아적으세요. 들린 소리에 최대한 가깝게 적되, 문맥으로 그럴듯하게 지어내지 마세요. '
+    + '이 오디오 조각에서 실제로 들리지 않은 문장·구절은 절대 추가하지 마세요 — 확신이 없으면 짧게 끝내거나 빈 문자열로 두는 것이 지어내는 것보다 낫습니다.\n'
     + (hint ? ('이 회의의 주제·자주 나오는 고유명사/용어: '+hint+'. 발음이 이와 비슷하면 이 표기를 우선하세요.\n') : '')
     + '이 오디오는 더 긴 회의를 몇 초 단위로 잘라낸 조각 중 하나이므로 문장이 중간에서 '
     + '시작되거나 끝날 수 있습니다. 있는 그대로, 잘린 문장이면 잘린 대로 처리하세요. '
@@ -1299,6 +1312,7 @@ async function sendChunkToGemini(key, base64Wav, contextText, targetLangName, hi
       ],
     }],
     generationConfig: {
+      temperature: 0,   // 받아쓰기는 창작이 아니라 정확한 재현이 목적 — 환각(없는 말 지어내기) 억제
       responseMimeType: 'application/json',
       responseSchema: {
         type: 'OBJECT',
@@ -1345,7 +1359,7 @@ async function sendChunkWithRetry(key, base64Wav, contextText, targetLangName, h
   }
 }
 
-function handleChunkResult(result){
+function handleChunkResult(result, longPause){
   const inTxt = (result.source_text||'').trim();
   const outTxt = (result.translation||'').trim();
   if(!inTxt) return;   // 침묵·의미없음으로 판단된 조각은 건너뛴다
@@ -1353,8 +1367,9 @@ function handleChunkResult(result){
   const srcArr = currentSession ? currentSession.src : null;
   const dstArr = currentSession ? currentSession.dst : null;
 
-  // 기존 문단 그룹핑(언어전환·길이·문장중간보호)을 그대로 재사용한다
-  const info = noteSource(inTxt);
+  // 기존 문단 그룹핑(언어전환·길이·문장중간보호)을 그대로 재사용한다.
+  // longPause는 "실제 오디오에 있었던 침묵"이 길었는지를 나타낸다(처리 지연과 무관).
+  const info = noteSource(inTxt, longPause);
   appendText('srcBox', inTxt, '', srcArr, info.seg, info.lang);
   // 원문·번역이 같은 API 응답 안에서 함께 오므로, 스트리밍 때처럼 번역이
   // 뒤처지는 문제 자체가 구조적으로 없다 — 항상 같은 문단번호를 그대로 쓴다.
@@ -1372,18 +1387,18 @@ async function processQueue(){
   updateChunkStatus();
   const chunk = chunkQueue.shift();
   try{
-    const wav = encodeWAV(chunk, SR);
+    const wav = encodeWAV(chunk.data, SR);
     const targetLangName = langName[currentTargetLang] || '한국어';
     const sttHint = document.getElementById('sttHint')?.value.trim() || '';
     const result = await sendChunkWithRetry(currentKey, wav, lastContextText, targetLangName, sttHint);
-    handleChunkResult(result);
+    handleChunkResult(result, chunk.longPause);
     chunkSeq++;
   }catch(err){
     lastParseError = '청크 '+chunkSeq+': '+(err?.message||String(err));
     lastParseErrorAt = Date.now();
     showErr('처리 실패(구간 누락): '+(err?.message||err));
     // 재시도로도 복구가 안 되면 조용히 버리지 않고 눈에 띄는 표시를 남긴다(구간 손실을 알 수 있도록).
-    handleChunkResult({ source_text: '⚠️(받아쓰기 실패 — 이 구간 내용 누락)', translation: '', language: 'ko' });
+    handleChunkResult({ source_text: '⚠️(받아쓰기 실패 — 이 구간 내용 누락)', translation: '', language: 'ko' }, true);
     chunkSeq++;
   }
   chunkProcessing = false;
@@ -1391,8 +1406,8 @@ async function processQueue(){
   if(chunkQueue.length) processQueue();
 }
 
-function enqueueChunk(float32Array){
-  chunkQueue.push(float32Array);
+function enqueueChunk(float32Array, longPause){
+  chunkQueue.push({ data: float32Array, longPause: longPause });
   processQueue();
 }
 
@@ -1405,8 +1420,12 @@ function finalizeChunk(){
   const merged = new Float32Array(chunkSamples);
   let off = 0;
   for(const b of chunkBuf){ merged.set(b, off); off += b.length; }
+  const trailing = silentSamples;   // 이 조각을 끝낸 후행 침묵 — 다음 조각 gap의 시작점
+  const lp = chunkLongPause;
   chunkBuf = []; chunkSamples = 0; silentSamples = 0; hasSpeechInChunk = false;
-  enqueueChunk(merged);
+  interSilence = trailing;          // 다음 발화 전까지 침묵을 계속 더해 문단 분리 판단
+  chunkLongPause = false;
+  enqueueChunk(merged, lp);
 }
 
 // 진행 중 중지를 누른 경우, 남아있는 오디오를 버리지 않고 마지막 조각으로 전송한다
@@ -1424,6 +1443,7 @@ function startMicProcessorBatch(){
   const maxSamples = Math.round(SR * MAX_CHUNK_MS/1000);
   const minSamples = Math.round(SR * MIN_CHUNK_MS/1000);
   const preTrimSamples = Math.round(SR * PRECHUNK_TRIM_MS/1000);
+  const paraBreakSamples = Math.round(SR * PARA_BREAK_MS/1000);
 
   proc.onaudioprocess = ev => {
     const data = ev.inputBuffer.getChannelData(0);
@@ -1432,8 +1452,16 @@ function startMicProcessorBatch(){
 
     chunkBuf.push(new Float32Array(data));   // 콜백 버퍼는 재사용되므로 복사해서 보관
     chunkSamples += data.length;
-    if(rms < SILENCE_RMS){ silentSamples += data.length; }
-    else { silentSamples = 0; hasSpeechInChunk = true; }
+    if(rms < SILENCE_RMS){
+      silentSamples += data.length;
+      if(!hasSpeechInChunk) interSilence += data.length;   // 발화 시작 전 침묵 누적(실제 오디오 기준)
+    } else {
+      if(!hasSpeechInChunk){                                // 이 조각의 첫 발화 시작
+        chunkLongPause = interSilence >= paraBreakSamples;  // 직전 실제 침묵이 길었는지 기록
+        hasSpeechInChunk = true;
+      }
+      silentSamples = 0;
+    }
 
     if(hasSpeechInChunk && silentSamples >= silenceSamples && chunkSamples >= minSamples){
       finalizeChunk();
@@ -1570,6 +1598,7 @@ async function startTranslation(){
   silentNoticeShown = false;
   lastParseError = null; lastParseErrorAt = 0;
   chunkBuf = []; chunkSamples = 0; silentSamples = 0; hasSpeechInChunk = false;
+  interSilence = SR*10; chunkLongPause = true;   // 첫 발화는 새 문단으로 시작
   chunkQueue = []; chunkProcessing = false; lastContextText = ''; chunkSeq = 0;
 
   // 문단번호 초기화 — 이어쓰기면 기존 최대값 다음부터 시작
@@ -1590,7 +1619,6 @@ async function startTranslation(){
   longNoticeShown=false;
   hideNotice();
   checkStorage();   // 시작 전에 저장 공간을 미리 확인
-  if(segSilenceT){clearTimeout(segSilenceT);segSilenceT=null;}
 
   if(!keepSession){
     currentSession = {
@@ -1639,7 +1667,6 @@ function cleanup(){
   if(proc){try{proc.disconnect();}catch(_){}proc=null;}
   if(actx){try{actx.close();}catch(_){}actx=null;}
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
-  if(segSilenceT){clearTimeout(segSilenceT);segSilenceT=null;}
   if(currentSession) currentSession.durationSec = getCurrentDurationSec(currentSession);
   stopElapsed();
   stopAutoSave();
