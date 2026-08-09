@@ -1,136 +1,20 @@
 
 <!DOCTYPE html>
 <!--
-  LIVE translate
-  v5.3  2026.08.01  회의록 목록에 다중 선택 삭제 기능 추가("선택" 버튼 →
-                    체크박스로 여러 개 골라 한번에 삭제)
-  v5.2  2026.08.01  회의 모드 문단 분리 재발 수정: 길이(여유분 80자) 기반 분리가
-                    침묵 분리와 달리 문장 중간 여부를 확인하지 않고 즉시 잘라
-                    "make | the Fed's..." 처럼 진행 중인 문장이 쪼개지는 경우가
-                    있었다. 길이 기반 분리도 문장 중간이면 완결까지 미루도록
-                    침묵 분리와 같은 pendingSilenceBreak 메커니즘을 공유하게 함
-  v5.1  2026.08.01  실증 확인(API 키 1개만으로 정상 작동 확인됨) — 대화 모드 완성
-                    단계 진입. 디버깅용 UI 정리: 두 번째 API Key 입력창,
-                    "ws2 끄고 단독 테스트" 진단 체크박스 제거. 상태 표시줄을
-                    연결 상태(✓/✕)와 오류 표시만 남기고 간소화
-  v5.0  2026.08.01  실증 확인(목소리 일관성 해결, 단어 누락 대폭 감소). 남은 문제인
-                    "영→한 텍스트에 영어·한국어가 섞여 나오는" 현상 수정:
-                    오디오에만 적용했던 입력언어 일치 필터(v4.7)를 텍스트
-                    출력에도 동일하게 적용
-  v4.9  2026.08.01  실증 확인(7분 안정, 오디오 끊김 완전 해소). "같은 화자인데
-                    문장마다 성우가 바뀐다" 문제 수정: speechConfig로 음성을
-                    방향별로 고정(ws=Puck, ws2=Kore) — 지금까지 미지정 상태라
-                    모델이 매 턴 임의로 목소리를 고르고 있었음
-  v4.8  2026.08.01  오디오 끊김(버퍼링 현상)은 해결 확인됨. 남은 문제인
-                    "가끔 3~4단어가 통째로 안 들리는" 현상 대응: 마이크
-                    콜백(128ms마다 실행)에서 ws·ws2용 JSON을 중복 직렬화
-                    하던 것을 1회로 통합해 메인 스레드 부담 축소
-  v4.7  2026.08.01  한국어 발화 중 간헐적으로 한국어 오디오가 섞여 나오던 문제
-                    수정: echoTargetLanguage:false여도 입력이 그 방향 자신의
-                    타겟 언어와 같을 때 모델이 가끔 음성을 내는 것으로 보여,
-                    감지된 입력 언어가 방향의 타겟과 같으면 오디오 재생만
-                    걸러내도록 함(텍스트는 그대로 유지)
-  v4.6  2026.08.01  영→한/한→영 오디오 출력이 정상 확인됨(2분 26초 안정,
-                    양방향 모두 음성 재생). 남은 문제인 "몇 단어 재생 후 한
-                    단어 스킵" 현상 수정: 부분 청크를 성급하게 내보내던 60ms
-                    지연 타이머를 180ms로 늘리고, 대화 모드 재생 여유(lookahead)를
-                    0.30→0.38초로 확대해 이음새 간격을 줄임
-  v4.5  2026.08.01  실증 확인(2분+ 대화 성공): 영어→한국어 방향 텍스트는 나오는데
-                    음성만 안 나오는 문제 수정. 한쪽이 계속 말하면 반대 방향
-                    오디오가 무조건 버려지던 스피커 소유권 기아 현상을, 1.2초
-                    이상 잡고 있으면 상대에게 양보하도록 고쳐 해결
-  v4.4  2026.08.01  실증 확인: 마이크 차단을 끈 단독 세션이 2분 40초간 끊김 없이
-                    안정적으로 작동함(지금까지 최초의 정상 사례). 마이크 차단이
-                    피드백 방지가 아니라 모델의 턴 처리 자체를 방해하고 있었던
-                    것으로 결론. 이제 ws2 존재 여부와 무관하게 마이크는 항상
-                    끊김 없이 스트리밍하고, 스피커 출력(재생)만 조율한다
-  v4.3  2026.08.01  결정적 발견: 진단용 "ws2 끄고 단독 테스트"에서도 증상이 동일해
-                    두 세션 동시 개설 가설을 완전히 기각. 원인은 대화 모드 전용
-                    마이크 차단·audioStreamEnd 로직이 convMode 값만으로 켜져 있어,
-                    경쟁 상대(ws2)가 없는 단독 세션에서도 불필요하게 개입해 회의
-                    모드와 달리 턴 처리를 방해했을 가능성. ws2가 실제로 열려있을
-                    때만 이 로직이 작동하도록 수정(needsHalfDuplex)
-  v4.2  2026.08.01  음성 출력이 "테이프 늘어지듯" 왜곡되는 문제 수정: 24kHz 서버
-                    오디오를 컨텍스트의 실제 샘플레이트(기기 고유값)와 다르게
-                    선언한 채 브라우저의 자동 리샘플링에 맡기고 있었다. iOS에서
-                    이 교차 샘플레이트 재생이 부정확한 사례가 있어, 데이터를
-                    직접 리샘플링해 버퍼-컨텍스트 샘플레이트를 일치시킴
-  v4.1  2026.08.01  audioStreamEnd 적용 후에도 턴종료가 계속 0으로 나와 해당
-                    가설도 기각. 두 세션을 동시에 여는 구조 자체가 원인인지
-                    격리하기 위해 "ws2 끄고 단독 세션만 테스트" 진단 스위치 추가
-  v4.0  2026.08.01  근본 원인 발견(공식 문서 확인): 오디오 스트림이 끊길 때
-                    audioStreamEnd 신호를 전혀 보내지 않아 서버가 발화가 계속
-                    이어지는 것으로 보고 턴을 끝내지 못했을 가능성. 1초 이상
-                    끊기면 자동으로 종료 신호 전송. 진단에 마지막 전송 후 경과시간 표시
-  v3.9  2026.08.01  대화 모드에 상대방 방향용 별도 API Key 입력 옵션 추가.
-                    수신 카운트 결과 턴종료 신호가 전혀 안 오고 오디오만 계속
-                    쌓이는 패턴 확인 — 동시 세션 제한/피드백 루프 여부를
-                    키 분리로 직접 실험할 수 있게 함. 진단에 키 분리 여부 표시
-  v3.8  2026.08.01  클라이언트 진단이 전부 정상인데도 기능이 안 되는 상황 대응:
-                    서버가 실제로 보내는 텍스트·오디오·턴종료 신호 수를 세어
-                    진단 줄에 노출. 오디오 수신 자체가 0인지 직접 확인 가능
-  v3.7  2026.08.01  대화 모드가 도중에 완전히 멎는 문제 진단 강화: 지금까지
-                    parse() 오류를 catch(_){}로 조용히 삼켜 "소켓은 열려있는데
-                    반응 없음" 현상의 원인을 알 수 없었다. 이제 처리 중 예외가
-                    나면 진단 줄에 오류 메시지를 그대로 노출한다.
-  v3.6  2026.08.01  음성 출력 문제 재수정: 모드별 저장·복원 로직이 계속 어긋나
-                    반복 재발해, 대화 모드는 저장값과 무관하게 항상 강제로 음성을
-                    켜도록 단순화(모드 전환·세션 시작 두 지점에서 이중 확인).
-                    진단에 실제 muted 값과 재생 컨텍스트 상태를 그대로 노출
-  v3.5  2026.08.01  음성 출력 안 됨 수정: 회의 모드에서 저장한 음소거 값이
-                    대화 모드 진입 시에도 그대로 적용돼 음성이 항상 꺼지던 문제
-                    (음소거 저장값에 모드 태그를 함께 기록해 같은 모드일 때만 복원)
-  v3.4  2026.08.01  서버의 turnComplete 신호를 감지해 즉시 마이크 개방
-                    (700ms 침묵 추정에만 의존하지 않는 확정적 근거 추가)
-  v3.3  2026.08.01  대화 모드 정지 재수정: 문장 사이 짧은 침묵마다 하드캡이 리셋되어
-                    사실상 무제한으로 막히던 구멍을 절대 시계(5초)로 차단.
-                    진단에 실제 차단 경과시간(초) 표시
-  v3.2  2026.08.01  마이크 캡처용 오디오 컨텍스트가 조용히 정지(suspended)되는
-                    문제 대응: 재생 시작 시 함께 재개, 매초 감시·자동 복구,
-                    진단 표시에 컨텍스트 상태 노출(🎙suspended 등)
-  v3.1  2026.07.31  대화 모드 정지 근본 원인 수정: 오디오가 idle 간격보다 촘촘히
-                    계속 들어올 때 스피커 점유·마이크 차단이 무한 연장되던 문제를
-                    연속 시간 하드캡(점유 8초·차단 6초)으로 해결
-  v3.0  2026.07.31  대화 모드 정지 문제 대응: 마이크 차단 상한(2초)·강제 해제,
-                    역방향 세션(ws2) 실패를 표시하고 독립 복구, 두 세션 개설 시차,
-                    대화 모드 연결 진단 표시, 서버 무응답 15초 경고
-  v2.9  2026.07.31  발화 중간 멈춤에서 원문 문단이 문장 중간에 쪼개지던 문제 수정
-                    (침묵 분리를 문장 완결까지 지연),
-                    중지 시 아직 다듬지 않은 문단을 모두 보정
-  v2.8  2026.07.31  좁은 화면에서 설정 버튼이 잘리던 문제 수정
-                    (버튼 묶음만 가로 스크롤, 설정 버튼 오른쪽 고정),
-                    사용법 링크를 설정 패널로 이동
-  v2.7  2026.07.31  회의록 목록에 소요시간 표시(이어쓰기 시 누적),
-                    문단 분리를 화제 전환 신호 기반으로 개선(80자 여유분 관찰 후 결정),
-                    사용 매뉴얼 링크 추가
-  v2.6  2026.07.31  대화 모드 음성 끊김 해결(반이중 스피커 제어,
-                    재생 중 마이크 차단으로 피드백 루프 차단, 재생 지연 상한)
-  v2.5  2026.07.31  저장 한도 실측 학습, 경고 배너에 즉시 다운로드 버튼,
-                    저장 기준(5MB/실측) 화면 표시
-  v2.4  2026.07.31  5분 주기 자동 저장, 저장 공간 감시·경고,
-                    2시간 경과 안내, 화면 문단 상한(기록은 보존)
-  v2.3  2026.07.28  다운로드 파일 맨 앞에 AI 요약 포함, 문서 구조 정리
-  v2.2  2026.07.28  사후 번역 보정(완결 문단을 맥락 기반으로 재번역),
-                    보정 켜기/끄기 토글
-  v2.1  2026.07.28  문장이 끝나는 지점에서만 문단 분리(문장 중간 절단 방지),
-                    번역문이 문장을 끝낸 뒤 문단 이동
-  v2.0  2026.07.28  원문·번역 문단번호 공유(좌우 동시 분리), 길이 초과 시 분리,
-                    회의록 문단 카드 표시, 다운로드 파일명 정리
-  v1.9  2026.07.28  음성 끊김 해결(지터 버퍼·청크 병합), 음소거 버튼,
-                    언어 변경 시 문단 분리 + 언어 태그
-  v1.8  2026.07.28  setup 필드 위치 수정(contextWindowCompression), 구성 폴백,
-                    재연결 횟수 제한, 오류 사유 표시, 버전 표기
-  v1.7  2026.07.28  대화 모드(양방향 음성) 추가, echo 중복출력 수정,
-                    자동저장·화면꺼짐방지·경과시간·글자크기 추가
-  v1.6              API Key 저장, 세션 이어쓰기 확인
-  v1.5              설정 패널 접기, AI 요약 복사(Plain Text)
-  v1.4              회의록 탭(세션 저장·AI 요약·다운로드·편집)
-  v1.3              문단 구분, 전체 복사, 6개 언어쌍
-  v1.2              2단 레이아웃(원문/번역), 고정 높이 스크롤
-  v1.1              앱 아이콘, 홈화면 추가 대응
-  v1.0              실시간 번역(텍스트 전용, 음성 출력 없음)
-
-=== Light 버전 (실험적 분기, 회의 모드 전용) ===
+  LIVE translate Light
+  L1.5  2026.08.09  받아쓰기 구간 누락 버그 수정 — 청크 처리 실패(주로 429 요청빈도초과)를 재시도
+                    없이 버려 몇 분마다 문장이 통째로 빠지던 문제. 429/5xx는 짧은 대기 후 자동
+                    재시도(최대 2회, sendChunkWithRetry), 그래도 실패하면 '⚠️(받아쓰기 실패 —
+                    이 구간 내용 누락)' 표시를 남겨 손실을 알 수 있게 함(factcheck.html에 적용한
+                    동일 수정을 이식).
+  L1.4  2026.08.08  [소급 정리 — 그동안 이 로그 갱신이 누락되어 한꺼번에 기록] 리브랜딩(Gemini
+                    Translate → LIVE translate 이름·URL·아이콘·"Powered by Google Gemini"
+                    표기), 발언 추천(💡) 기능을 기본 버전에서 이식, 받아쓰기 키워드 힌트(sttHint)
+                    추가 + 모델을 gemini-2.5-flash → gemini-3.6-flash로 업그레이드(한국어 인식
+                    개선), 모바일(아이폰 등 좁은 화면)에서 설정 패널이 잘려 스크롤도 안 되던
+                    문제 수정(overflow-y:auto·max-height:70vh).
+  ※ 이 파일은 Light(실험적 분기, 회의 모드 전용) 버전 로그만 관리한다. 기본 버전(translate.html)
+    이력은 그쪽 파일에서 별도 관리하므로 여기서는 삭제함.
   L1.2  2026.08.05  웹훅 URL 실제 값으로 교체 + 가드 조건문 버그 수정
                     (메인 앱과 동일)
   L1.1  2026.08.05  긴급 수정: 화면 전환(visibilitychange) 이벤트에서
@@ -454,7 +338,7 @@
     <a class="manual-link" href="live_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/translate.html" title="음성 출력·대화 모드가 있는 기본 버전으로 이동">🔵 기본 버전</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/" title="버전을 비교하고 선택하는 첫 화면으로 이동">🏠 홈</a>
-    <div class="version-tag">Light v1.4 · 2026.08.08<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
+    <div class="version-tag">Light v1.5 · 2026.08.09<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.15/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
   </div>
 
   <!-- 공용 안내 배너 (저장 공간·긴 세션 경고) -->
@@ -1440,6 +1324,27 @@ async function sendChunkToGemini(key, base64Wav, contextText, targetLangName, hi
   return JSON.parse(text);
 }
 
+// 429(요청 빈도 초과)·5xx 같은 일시적 오류는 짧게 대기 후 자동 재시도한다. 재시도 없이 그냥
+// 버리면 그 구간의 발화가 조용히 통째로 사라져 "몇 분마다 문장이 빠지는" 현상으로 나타난다.
+const CHUNK_MAX_RETRY = 2;
+async function sendChunkWithRetry(key, base64Wav, contextText, targetLangName, hint){
+  for(let attempt=0; attempt<=CHUNK_MAX_RETRY; attempt++){
+    try{
+      const result = await sendChunkToGemini(key, base64Wav, contextText, targetLangName, hint);
+      if(attempt>0) showErr('');
+      return result;
+    }catch(err){
+      const transient = /HTTP (429|5\d\d)/.test(err?.message||'');
+      if(transient && attempt<CHUNK_MAX_RETRY){
+        showErr('처리 재시도 중… ('+(err?.message||err)+')');
+        await new Promise(r=>setTimeout(r, 1200*(attempt+1)));
+        continue;
+      }
+      throw err;   // 재시도 대상이 아니거나 재시도 소진 — 호출부에서 실패 표시 처리
+    }
+  }
+}
+
 function handleChunkResult(result){
   const inTxt = (result.source_text||'').trim();
   const outTxt = (result.translation||'').trim();
@@ -1470,13 +1375,16 @@ async function processQueue(){
     const wav = encodeWAV(chunk, SR);
     const targetLangName = langName[currentTargetLang] || '한국어';
     const sttHint = document.getElementById('sttHint')?.value.trim() || '';
-    const result = await sendChunkToGemini(currentKey, wav, lastContextText, targetLangName, sttHint);
+    const result = await sendChunkWithRetry(currentKey, wav, lastContextText, targetLangName, sttHint);
     handleChunkResult(result);
     chunkSeq++;
   }catch(err){
     lastParseError = '청크 '+chunkSeq+': '+(err?.message||String(err));
     lastParseErrorAt = Date.now();
-    showErr('처리 오류: '+(err?.message||err));
+    showErr('처리 실패(구간 누락): '+(err?.message||err));
+    // 재시도로도 복구가 안 되면 조용히 버리지 않고 눈에 띄는 표시를 남긴다(구간 손실을 알 수 있도록).
+    handleChunkResult({ source_text: '⚠️(받아쓰기 실패 — 이 구간 내용 누락)', translation: '', language: 'ko' });
+    chunkSeq++;
   }
   chunkProcessing = false;
   updateChunkStatus();
