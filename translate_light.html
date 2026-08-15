@@ -2,6 +2,15 @@
 <!DOCTYPE html>
 <!--
   LIVE translate Light
+  L1.9  2026.08.09  받아쓰기 엔진 선택 추가 — ① Gemini API(기존: 오디오를 보내 받아쓰기+번역을
+                    한 번에 처리) ② 브라우저 내장 Web Speech API(받아쓰기 무료·즉시, iOS/Safari는
+                    Apple·Chrome은 Google 음성 인식으로 Gemini와 무관). ②를 고르면 받아쓴 텍스트만
+                    Gemini에 보내 번역하므로(translateTextOnly) 오디오 입력 토큰이 사라져 비용이
+                    더 줄고 받아쓰기 지연도 없어진다. 재시도·순서보장 로직은 기존 청크 큐를 그대로
+                    재사용(큐 항목에 text 필드 추가, callWithRetry로 재시도 공통화).
+                    제약: 브라우저마다 인식 품질이 다르고, 키워드 힌트가 받아쓰기엔 적용되지 않으며
+                    (번역에는 적용), 자동 언어감지 미지원이라 회의 언어를 지정해야 한다.
+                    미지원 브라우저에서 고르면 과금 방지를 위해 자동 전환 없이 안내만 한다.
   L1.8  2026.08.09  API 비용 대폭 절감 — 실사용 3분에 200~300원이 나와 원인 분석. 표기된
                     "$0.15/hr"은 옛 gemini-2.5-flash($0.30/$2.50) 기준이었는데, 한국어 인식
                     개선을 위해 gemini-3.6-flash($1.50/$7.50)로 올리면서 입력 5배·출력 3배가
@@ -394,6 +403,13 @@
         <option value="fr">프랑스어</option>
       </select>
     </div>
+    <div class="sg" id="sgSttEngine">
+      <label>받아쓰기 엔진</label>
+      <select id="sttEngine" onchange="onEngineChange()">
+        <option value="gemini" selected>Gemini API — 정확·전 브라우저 (유료)</option>
+        <option value="browser">브라우저 내장 — 받아쓰기 무료 (Safari·Chrome)</option>
+      </select>
+    </div>
     <div class="sg" id="sgSttHint">
       <label>받아쓰기 키워드 힌트 (선택 — 고유명사 인식↑)</label>
       <input type="text" id="sttHint" placeholder="예: 뉴욕시, 맘다니, 공공 식료품점, 코스피" style="width:100%; background:#1c1c1e; color:#eee; border:0.5px solid #333; border-radius:8px; padding:6px 8px; font-size:13px;" />
@@ -401,7 +417,7 @@
     <a class="manual-link" href="live_translate_manual.pdf" target="_blank" rel="noopener" title="사용 매뉴얼 (PDF)">📖 사용법</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/translate.html" title="음성 출력·대화 모드가 있는 기본 버전으로 이동">🔵 기본 버전</a>
     <a class="manual-link" href="https://gsjang-hue.github.io/LIVE-Translate/" title="버전을 비교하고 선택하는 첫 화면으로 이동">🏠 홈</a>
-    <div class="version-tag">Light v1.8 · 2026.08.09<br><span style="font-size:9px;color:#30d158;">API 비용 추정 ≈ $0.6/1hr</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
+    <div class="version-tag">Light v1.9 · 2026.08.09<br><span style="font-size:9px;color:#30d158;">API 비용 ≈ $0.6/1hr (브라우저 내장 엔진 시 ≈$0.4)</span><br><span style="font-size:9px;color:#8899aa;">Powered by Google Gemini</span></div>
   </div>
 
   <!-- 공용 안내 배너 (저장 공간·긴 세션 경고) -->
@@ -1127,6 +1143,7 @@ function saveSettings(){
   const pf=document.getElementById('myProfile'); if(pf) localStorage.setItem('gtl_myProfile', pf.value||'');
   const mi=document.getElementById('meetingInfo'); if(mi) localStorage.setItem('gtl_meetingInfo', mi.value||'');
   const sh=document.getElementById('sttHint'); if(sh) localStorage.setItem('gtl_sttHint', sh.value||'');
+  const se=document.getElementById('sttEngine'); if(se) localStorage.setItem('gtl_sttEngine', se.value);
   const mc=document.getElementById('maxClaims'); if(mc) localStorage.setItem('gtl_maxClaims', mc.value||'10');
   const cs=document.getElementById('checkScope'); if(cs) localStorage.setItem('gtl_scope', cs.value||'normal');
 }
@@ -1143,6 +1160,8 @@ function loadSettings(){
   const pf=document.getElementById('myProfile'); if(pf) pf.value = localStorage.getItem('gtl_myProfile')||'';
   const mi=document.getElementById('meetingInfo'); if(mi) mi.value = localStorage.getItem('gtl_meetingInfo')||'';
   const sh=document.getElementById('sttHint'); if(sh) sh.value = localStorage.getItem('gtl_sttHint')||'';
+  const sev=localStorage.getItem('gtl_sttEngine'); const seEl=document.getElementById('sttEngine');
+  if(seEl && sev && [...seEl.options].some(o=>o.value===sev)) seEl.value = sev;
   const mc=document.getElementById('maxClaims'); if(mc) mc.value = localStorage.getItem('gtl_maxClaims')||'10';
   const csv=localStorage.getItem('gtl_scope'); const csEl=document.getElementById('checkScope');
   if(csEl && csv && [...csEl.options].some(o=>o.value===csv)) csEl.value = csv;
@@ -1744,10 +1763,10 @@ async function sendChunkToGemini(key, base64Wav, contextText, targetLangName, hi
 // 429(요청 빈도 초과)·5xx 같은 일시적 오류는 짧게 대기 후 자동 재시도한다. 재시도 없이 그냥
 // 버리면 그 구간의 발화가 조용히 통째로 사라져 "몇 분마다 문장이 빠지는" 현상으로 나타난다.
 const CHUNK_MAX_RETRY = 2;
-async function sendChunkWithRetry(key, base64Wav, contextText, targetLangName, hint){
+async function callWithRetry(doCall){
   for(let attempt=0; attempt<=CHUNK_MAX_RETRY; attempt++){
     try{
-      const result = await sendChunkToGemini(key, base64Wav, contextText, targetLangName, hint);
+      const result = await doCall();
       if(attempt>0) showErr('');
       return result;
     }catch(err){
@@ -1760,6 +1779,45 @@ async function sendChunkWithRetry(key, base64Wav, contextText, targetLangName, h
       throw err;   // 재시도 대상이 아니거나 재시도 소진 — 호출부에서 실패 표시 처리
     }
   }
+}
+async function sendChunkWithRetry(key, base64Wav, contextText, targetLangName, hint){
+  return callWithRetry(() => sendChunkToGemini(key, base64Wav, contextText, targetLangName, hint));
+}
+
+/* ── 브라우저 내장 받아쓰기를 쓸 때: 이미 확보한 텍스트를 번역만 요청한다 ──
+   오디오를 보내지 않으므로 입력 토큰이 크게 줄고, 받아쓰기 지연도 사라진다. */
+async function translateTextOnly(key, text, targetLangName, hint){
+  const prompt = '아래 회의 발언을 자연스러운 '+targetLangName+'로 번역하세요.\n'
+    + '- 숫자·날짜·금액·고유명사를 정확히 유지하고, 원문에 없는 내용을 덧붙이지 마세요.\n'
+    + (hint ? ('- 이 회의의 주제·자주 나오는 용어: '+hint+'\n') : '')
+    + '- 발언이 이미 '+targetLangName+'라면 translation을 빈 문자열로 두세요.\n'
+    + '- language에는 감지된 원문 언어의 BCP-47 코드(ko, en, ja, zh 등)를 넣으세요.\n\n'
+    + '[발언]\n' + text;
+  const body = {
+    contents: [{ role:'user', parts:[{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0,
+      thinkingConfig: MINIMAL_THINKING,
+      responseMimeType: 'application/json',
+      responseSchema: { type:'OBJECT', properties:{ translation:{type:'STRING'}, language:{type:'STRING'} }, required:['translation','language'] },
+    },
+  };
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+STT_MODEL+':generateContent?key='+key, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+  });
+  if(!res.ok){
+    const t = await res.text().catch(()=> '');
+    throw new Error('HTTP '+res.status+' '+t.slice(0,200));
+  }
+  const data = await res.json();
+  const out = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if(!out) throw new Error('응답에 내용 없음');
+  const parsed = JSON.parse(out);
+  // 이후 처리(문단 그룹핑·표시·저장)는 오디오 경로와 완전히 동일한 형태로 맞춰 넘긴다
+  return { source_text: text, translation: parsed.translation||'', language: parsed.language||'' };
+}
+async function translateTextWithRetry(key, text, targetLangName, hint){
+  return callWithRetry(() => translateTextOnly(key, text, targetLangName, hint));
 }
 
 function handleChunkResult(result, longPause){
@@ -1790,10 +1848,16 @@ async function processQueue(){
   updateChunkStatus();
   const chunk = chunkQueue.shift();
   try{
-    const wav = encodeWAV(chunk.data, SR);
     const targetLangName = langName[currentTargetLang] || '한국어';
     const sttHint = document.getElementById('sttHint')?.value.trim() || '';
-    const result = await sendChunkWithRetry(currentKey, wav, lastContextText, targetLangName, sttHint);
+    let result;
+    if(chunk.text !== undefined){
+      // 브라우저 내장 엔진 — 받아쓰기는 이미 끝났고 번역만 요청한다
+      result = await translateTextWithRetry(currentKey, chunk.text, targetLangName, sttHint);
+    } else {
+      const wav = encodeWAV(chunk.data, SR);
+      result = await sendChunkWithRetry(currentKey, wav, lastContextText, targetLangName, sttHint);
+    }
     handleChunkResult(result, chunk.longPause);
     chunkSeq++;
   }catch(err){
@@ -1807,6 +1871,74 @@ async function processQueue(){
   chunkProcessing = false;
   updateChunkStatus();
   if(chunkQueue.length) processQueue();
+}
+
+/* ══════════ 받아쓰기 엔진 ② — 브라우저 내장(Web Speech API) ══════════
+   받아쓰기가 무료·즉시 처리되고(iOS/Safari는 Apple, Chrome은 Google 음성 인식 — Gemini와 무관),
+   Gemini에는 번역만 텍스트로 요청하므로 오디오 입력 토큰이 사라져 비용이 더 준다.
+   대신 브라우저마다 인식 품질이 다르고, 키워드 힌트는 받아쓰기에 적용되지 않으며(번역에는 적용됨),
+   자동 언어감지를 지원하지 않아 회의 언어를 지정해야 한다. */
+const WEB_SPEECH_LANG = { ko:'ko-KR', en:'en-US', ja:'ja-JP', zh:'zh-CN', es:'es-ES', de:'de-DE', fr:'fr-FR' };
+let recog = null;
+let userStoppedRec = false;
+let lastFinalAt = 0;
+
+function browserSttSupported(){ return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+function usingBrowserStt(){ return document.getElementById('sttEngine')?.value === 'browser'; }
+
+function onEngineChange(){
+  saveSettings();
+  if(usingBrowserStt() && !browserSttSupported()){
+    showNotice('이 브라우저는 내장 음성 인식을 지원하지 않습니다. <b>Gemini API</b> 엔진을 쓰거나 Safari·Chrome에서 접속하세요.', 'warn');
+  } else if(usingBrowserStt()){
+    showNotice('브라우저 내장 엔진은 <b>받아쓰기가 무료</b>입니다(번역은 Gemini 사용). 회의 언어를 “자동감지”가 아닌 실제 언어로 지정해 주세요.', 'info');
+  } else {
+    hideNotice();
+  }
+}
+
+function startBrowserRec(){
+  const SR_CLS = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const srcLang = document.getElementById('srcLang')?.value || 'ko';
+  recog = new SR_CLS();
+  recog.lang = WEB_SPEECH_LANG[srcLang] || 'ko-KR';   // 자동감지 미지원 → 지정 언어(없으면 한국어)
+  recog.continuous = true;
+  recog.interimResults = true;
+
+  recog.onresult = (ev) => {
+    for(let i=ev.resultIndex; i<ev.results.length; i++){
+      const res = ev.results[i];
+      if(!res.isFinal) continue;
+      const txt = (res[0].transcript||'').trim();
+      if(!txt) continue;
+      // 브라우저 엔진은 즉시 처리되어 응답 지연이 없으므로, 결과 사이 간격을 실제 침묵으로 봐도 된다
+      const now = Date.now();
+      const longPause = lastFinalAt === 0 || (now - lastFinalAt) >= PARA_BREAK_MS;
+      lastFinalAt = now;
+      chunkQueue.push({ text: txt, longPause: longPause });   // 번역 큐로 — 순서·재시도 로직 재사용
+      processQueue();
+      updateChunkStatus();
+    }
+  };
+  recog.onerror = (ev) => {
+    if(ev.error==='no-speech' || ev.error==='aborted') return;
+    if(ev.error==='not-allowed' || ev.error==='service-not-allowed'){
+      showErr('마이크 권한이 거부되었습니다');
+      userStoppedRec = true;
+    } else {
+      showErr('인식 오류: '+ev.error);
+    }
+  };
+  // continuous라도 브라우저가 주기적으로 세션을 끊는다 — 사용자가 멈춘 게 아니면 이어서 재시작
+  recog.onend = () => { if(!userStoppedRec) { try{ recog.start(); }catch(_){} } };
+
+  userStoppedRec = false;
+  lastFinalAt = 0;
+  recog.start();
+}
+function stopBrowserRec(){
+  userStoppedRec = true;
+  if(recog){ try{ recog.stop(); }catch(_){} recog = null; }
 }
 
 function enqueueChunk(float32Array, longPause){
@@ -2047,6 +2179,23 @@ async function startTranslation(){
     document.getElementById('settingsToggle')?.classList.remove('open');
   }
 
+  // ── 브라우저 내장 엔진: 오디오 캡처 파이프라인 없이 Web Speech로 바로 받아쓴다 ──
+  if(usingBrowserStt()){
+    if(!browserSttSupported()){
+      showNotice('이 브라우저는 내장 음성 인식을 지원하지 않습니다. 설정에서 <b>Gemini API</b> 엔진으로 바꾸거나 Safari·Chrome에서 접속하세요.', 'warn');
+      showErr('내장 음성 인식 미지원');
+      return;   // 의도치 않은 과금을 막기 위해 Gemini로 자동 전환하지 않는다
+    }
+    try{ startBrowserRec(); }
+    catch(err){ showErr('시작 실패: '+(err?.message||err)); return; }
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+    setStatus('recording', '녹음 중 (브라우저 내장) — '+currentSessionName);
+    if(!elapsedInt){ startElapsed(); startAutoSave(); }
+    acquireWakeLock();
+    return;
+  }
+
   try{
     stream = await navigator.mediaDevices.getUserMedia({audio:{sampleRate:SR,channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});
   } catch(err){ showErr('마이크 권한 필요: '+err.message); return; }
@@ -2066,6 +2215,7 @@ async function startTranslation(){
 
 function cleanup(){
   if(usageSessionId){ sendUsageEvent('stop'); usageSessionId = null; }
+  stopBrowserRec();      // 브라우저 내장 엔진을 쓰고 있었다면 정지(아니면 무해)
   flushPendingChunk();   // 중지 시점까지 모아둔 오디오를 버리지 않고 마지막 조각으로 전송
   if(proc){try{proc.disconnect();}catch(_){}proc=null;}
   if(actx){try{actx.close();}catch(_){}actx=null;}
